@@ -394,7 +394,7 @@
   </div>
 
   <!-- Controls hint -->
-  <div id="controls-hint" class="glass-panel">W Forward &middot; S Reverse &middot; A/D Turn &middot; Shift Boost</div>
+  <div id="controls-hint" class="glass-panel">W Forward &middot; S Reverse &middot; A/D Turn &middot; Space Turbo</div>
 
   <!-- Combo display -->
   <div id="combo-display" class="glass-panel"></div>
@@ -718,6 +718,7 @@ function movePlayer(player, inp, dt, upgrades) {
     player.x = (player.x / dist) * WORLD_RADIUS;
     player.z = (player.z / dist) * WORLD_RADIUS;
   }
+  player.isBoosting = boosting;
   return boosting;
 }
 
@@ -829,42 +830,56 @@ function approachSpeed(attacker, target) {
 
 function applyCollision(a, b, now) {
   const events = [];
-  const aApproach = Math.max(0, approachSpeed(a, b));
-  const bApproach = Math.max(0, approachSpeed(b, a));
+  const aSpeed = Math.sqrt(a.vx * a.vx + a.vz * a.vz);
+  const bSpeed = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
   const mx = (a.x + b.x) / 2;
   const mz = (a.z + b.z) / 2;
 
-  // A hits B
-  if (aApproach > 0 && now - b.lastHitTime > INVULN_AFTER_HIT) {
-    const dmg = Math.max(1, BASE_COLLISION_DAMAGE + DAMAGE_PER_LEVEL * a.boatLevel - DEFENSE_PER_LEVEL * b.boatLevel);
-    b.health -= dmg;
-    b.lastHitTime = now;
-    const stolen = Math.min(b.plasticCount, Math.max(1, Math.ceil(b.plasticCount * PLASTIC_STEAL_FRACTION)));
-    b.plasticCount -= stolen;
-    a.plasticCount += stolen;
-    a.totalCollected += stolen;
-    checkLevelUp(a);
-    if (stolen > 0) events.push({ id: 'ce_' + (collisionIdCounter++), x: mx, z: mz, text: '+' + stolen + ' plastic!', color: '#ffd93d', time: now });
-    events.push({ id: 'ce_' + (collisionIdCounter++), x: b.x, z: b.z, text: '-' + dmg + ' HP', color: '#ff4444', time: now, victimId: b.id });
-    if (b.id === 'local') triggerHitEffect();
-  }
+  if (now - a.lastHitTime < INVULN_AFTER_HIT || now - b.lastHitTime < INVULN_AFTER_HIT) return events;
 
-  // B hits A
-  if (bApproach > 0 && now - a.lastHitTime > INVULN_AFTER_HIT) {
-    const dmg = Math.max(1, BASE_COLLISION_DAMAGE + DAMAGE_PER_LEVEL * b.boatLevel - DEFENSE_PER_LEVEL * a.boatLevel);
-    a.health -= dmg;
-    a.lastHitTime = now;
-    const stolen = Math.min(a.plasticCount, Math.max(1, Math.ceil(a.plasticCount * PLASTIC_STEAL_FRACTION)));
-    a.plasticCount -= stolen;
-    b.plasticCount += stolen;
-    b.totalCollected += stolen;
-    checkLevelUp(b);
+  // Determine winner: the FASTER boat wins the collision
+  const aIsFaster = aSpeed >= bSpeed;
+  const winner = aIsFaster ? a : b;
+  const loser  = aIsFaster ? b : a;
+
+  const winnerBoosting = !!winner.isBoosting;
+  const speedDiff = Math.abs(aSpeed - bSpeed);
+  const dmg = Math.max(5, Math.floor(BASE_COLLISION_DAMAGE + speedDiff * 2 + DAMAGE_PER_LEVEL * winner.boatLevel - DEFENSE_PER_LEVEL * loser.boatLevel));
+
+  if (winnerBoosting) {
+    // Boosting winner deals heavy damage and steals plastic
+    loser.health -= dmg;
+    loser.lastHitTime = now;
+    const stolen = Math.min(loser.plasticCount, Math.max(1, Math.ceil(loser.plasticCount * PLASTIC_STEAL_FRACTION)));
+    loser.plasticCount -= stolen;
+    winner.plasticCount += stolen;
+    winner.totalCollected += stolen;
+    checkLevelUp(winner);
+
+    // Winner gains some HP from the hit
+    const hpGain = Math.floor(dmg * 0.3);
+    winner.health = Math.min(MAX_HEALTH, winner.health + hpGain);
+
     if (stolen > 0) events.push({ id: 'ce_' + (collisionIdCounter++), x: mx, z: mz, text: '+' + stolen + ' plastic!', color: '#ffd93d', time: now });
-    events.push({ id: 'ce_' + (collisionIdCounter++), x: a.x, z: a.z, text: '-' + dmg + ' HP', color: '#ff4444', time: now, victimId: a.id });
-    if (a.id === 'local') triggerHitEffect();
+    events.push({ id: 'ce_' + (collisionIdCounter++), x: loser.x, z: loser.z, text: '-' + dmg + ' HP', color: '#ff4444', time: now, victimId: loser.id });
+    events.push({ id: 'ce_' + (collisionIdCounter++), x: winner.x, z: winner.z, text: '+' + hpGain + ' HP', color: '#44ff88', time: now });
+    if (loser.id === 'local') triggerHitEffect();
+  } else {
+    // No boost: BOTH boats take damage, attacker takes more for being reckless
+    const selfDmg = Math.floor(dmg * 0.7);
+    const otherDmg = Math.floor(dmg * 0.4);
+    winner.health -= selfDmg;
+    winner.lastHitTime = now;
+    loser.health -= otherDmg;
+    loser.lastHitTime = now;
+    events.push({ id: 'ce_' + (collisionIdCounter++), x: winner.x, z: winner.z, text: '-' + selfDmg + ' HP', color: '#ff4444', time: now, victimId: winner.id });
+    events.push({ id: 'ce_' + (collisionIdCounter++), x: loser.x, z: loser.z, text: '-' + otherDmg + ' HP', color: '#ff4444', time: now, victimId: loser.id });
+    if (winner.id === 'local' || loser.id === 'local') triggerHitEffect();
   }
   return events;
 }
+
+const COLLISION_PUSH_FORCE = 3.5; // multiplier for harder knockback
 
 function checkBoatCollisions(players, now) {
   const events = [];
@@ -874,11 +889,17 @@ function checkBoatCollisions(players, now) {
       const hit = obbOverlap(boatOBB(a), boatOBB(b));
       if (hit) {
         events.push(...applyCollision(a, b, now));
+
+        // Harder push — boats get knocked apart significantly
+        const aSpeed = Math.sqrt(a.vx * a.vx + a.vz * a.vz);
+        const bSpeed = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+        const impactForce = COLLISION_PUSH_FORCE + (aSpeed + bSpeed) * 0.15;
+
         const total = a.boatLevel + b.boatLevel;
         const ar = b.boatLevel / total;
         const br = a.boatLevel / total;
-        a.x += hit.pushX * ar;  a.z += hit.pushZ * ar;
-        b.x -= hit.pushX * br;  b.z -= hit.pushZ * br;
+        a.x += hit.pushX * ar * impactForce;  a.z += hit.pushZ * ar * impactForce;
+        b.x -= hit.pushX * br * impactForce;  b.z -= hit.pushZ * br * impactForce;
         spawnSplash((a.x + b.x) / 2, (a.z + b.z) / 2);
       }
     }
@@ -1855,7 +1876,7 @@ const keyMap = {
   KeyS: 'backward',   ArrowDown: 'backward',
   KeyA: 'left',       ArrowLeft: 'left',
   KeyD: 'right',      ArrowRight: 'right',
-  ShiftLeft: 'boost',  ShiftRight: 'boost',
+  Space: 'boost',
 };
 
 window.addEventListener('keydown', (e) => {
@@ -1867,7 +1888,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Digit1') { upgradeSelection = 0; refreshUpgradeCards(); }
     else if (e.code === 'Digit2') { upgradeSelection = 1; refreshUpgradeCards(); }
     else if (e.code === 'Digit3') { upgradeSelection = 2; refreshUpgradeCards(); }
-    else if (e.code === 'Enter' || e.code === 'Space') { confirmUpgrade(); }
+    else if (e.code === 'Enter') { confirmUpgrade(); }
   }
 });
 window.addEventListener('keyup', (e) => {
