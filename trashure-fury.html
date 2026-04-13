@@ -172,6 +172,18 @@
     }
     #hit-vignette.active { opacity: 1; }
 
+    #heal-vignette {
+      position: fixed; inset: 0; z-index: 15;
+      pointer-events: none; opacity: 0;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(255,102,170,0.4) 100%);
+      transition: opacity 0.2s ease-out;
+    }
+    @keyframes heal-glow {
+      0%   { opacity: 1; box-shadow: inset 0 0 80px rgba(255,102,170,0.6); }
+      100% { opacity: 0; box-shadow: inset 0 0 0px rgba(255,102,170,0.0); }
+    }
+    #heal-vignette.active { animation: heal-glow 0.7s ease-out forwards; }
+
     /* ---- SCREEN SHAKE ---- */
     @keyframes screen-shake {
       0%   { transform: translateX(0); }
@@ -370,6 +382,7 @@
 
   <!-- Hit vignette -->
   <div id="hit-vignette"></div>
+  <div id="heal-vignette"></div>
 
   <!-- Respawn overlay -->
   <div id="respawn-overlay" hidden>
@@ -754,6 +767,7 @@ function checkGarbageCollection(player, upgrades) {
       if (g.isHeal) {
         player.health = Math.min(MAX_HEALTH, player.health + HP_PER_PINK_PICKUP);
         spawnFloatingText(g.x, g.z, '+' + HP_PER_PINK_PICKUP + ' HP', '#ff66aa');
+        if (player.id === 'local') triggerHealEffect(g.x, g.z);
       }
 
       // Combo
@@ -1861,6 +1875,45 @@ function triggerHitEffect() {
   setTimeout(() => gs.classList.remove('shaking'), 300);
 }
 
+// -- Heal effect (pink glow + 3D particles) --
+function triggerHealEffect(x, z) {
+  // Screen vignette
+  const v = document.getElementById('heal-vignette');
+  v.classList.remove('active');
+  void v.offsetWidth; // force reflow to restart animation
+  v.classList.add('active');
+  setTimeout(() => v.classList.remove('active'), 700);
+
+  // 3D sparkle particles rising from pickup
+  const wy = getWaveHeight(x, z, gameTime);
+  for (let i = 0; i < 8; i++) {
+    const pGeom = new THREE.SphereGeometry(0.1, 6, 6);
+    const pMat = new THREE.MeshBasicMaterial({ color: 0xff66aa, transparent: true, opacity: 1 });
+    const p = new THREE.Mesh(pGeom, pMat);
+    p.position.set(
+      x + (Math.random() - 0.5) * 1.5,
+      wy + 0.5,
+      z + (Math.random() - 0.5) * 1.5
+    );
+    scene.add(p);
+    const vx = (Math.random() - 0.5) * 2;
+    const vy = 2 + Math.random() * 3;
+    const vz = (Math.random() - 0.5) * 2;
+    const start = performance.now();
+    function animHeal() {
+      const elapsed = (performance.now() - start) / 1000;
+      if (elapsed > 0.8) { scene.remove(p); return; }
+      p.position.x += vx * 0.016;
+      p.position.y += vy * 0.016;
+      p.position.z += vz * 0.016;
+      p.material.opacity = 1 - elapsed / 0.8;
+      p.scale.setScalar(1 - elapsed / 0.8);
+      requestAnimationFrame(animHeal);
+    }
+    requestAnimationFrame(animHeal);
+  }
+}
+
 // -- Respawn --
 function showRespawn() {
   respawnActive = true;
@@ -2049,7 +2102,10 @@ function gameLoop(timestamp) {
   if (playerMesh) {
     const wy   = getWaveHeight(localPlayer.x, localPlayer.z, gameTime);
     const tilt = getWaveTilt(localPlayer.x, localPlayer.z, gameTime);
-    playerMesh.position.set(localPlayer.x, wy + 0.8, localPlayer.z);
+    // Buoyancy: boat sits higher at full HP, sinks as HP drops
+    const hpRatio = Math.max(0, localPlayer.health / MAX_HEALTH);
+    const buoyancy = 1.2 * hpRatio + 0.1 * (1 - hpRatio); // 1.2 at full HP, 0.1 at 0 HP
+    playerMesh.position.set(localPlayer.x, wy + buoyancy, localPlayer.z);
     // When using GLTF template, its base rotation is baked in via clone, but we override .rotation each frame:
     const baseYRot = boatModelTemplate ? -Math.PI / 2 : 0;
     playerMesh.rotation.set(tilt.tiltX, localPlayer.rotation + baseYRot, tilt.tiltZ);
@@ -2070,7 +2126,10 @@ function gameLoop(timestamp) {
     if (!mesh) continue;
     const wy   = getWaveHeight(bot.x, bot.z, gameTime);
     const tilt = getWaveTilt(bot.x, bot.z, gameTime);
-    mesh.position.set(bot.x, wy + 0.8, bot.z);
+    // Buoyancy: sinks as HP drops
+    const botHpRatio = Math.max(0, bot.health / MAX_HEALTH);
+    const botBuoyancy = 1.2 * botHpRatio + 0.1 * (1 - botHpRatio);
+    mesh.position.set(bot.x, wy + botBuoyancy, bot.z);
     const baseYRot = boatModelTemplate ? -Math.PI / 2 : 0;
     mesh.rotation.set(tilt.tiltX, bot.rotation + baseYRot, tilt.tiltZ);
     const lvlScale = boatModelTemplate ? 10.0 : 1.0;
