@@ -1941,11 +1941,15 @@ function ensureLabel(id, name, isLocal, isPirate) {
 }
 
 function updateEntityLabels() {
+  const crownPrefix = crownTargetId ? '\u{1F451} ' : '';
   // Local player
-  setLabel(localPlayer.id, localPlayer.name + ' Lv ' + localPlayer.boatLevel, localPlayer.x, localPlayer.z, localPlayer.health / MAX_HEALTH, true, false);
+  const pName = (crownTargetId === localPlayer.id ? crownPrefix : '') + localPlayer.name + ' Lv ' + localPlayer.boatLevel;
+  setLabel(localPlayer.id, pName, localPlayer.x, localPlayer.z, localPlayer.health / MAX_HEALTH, true, false);
   // Bots
-  for (const b of bots)
-    setLabel(b.id, b.name + ' Lv ' + b.boatLevel, b.x, b.z, b.health / MAX_HEALTH, false, false);
+  for (const b of bots) {
+    const bName = (crownTargetId === b.id ? crownPrefix : '') + b.name + ' Lv ' + b.boatLevel;
+    setLabel(b.id, bName, b.x, b.z, b.health / MAX_HEALTH, false, false);
+  }
   // Pirates
   for (const p of pirates) {
     const mh = p.isFlagship ? FLAGSHIP_HP : MAX_HEALTH;
@@ -2230,6 +2234,69 @@ function initGame() {
 }
 
 // ============================================================
+// 13b. CROWN — floats above the #1 player
+// ============================================================
+let crownMesh = null;
+let crownTargetId = null;
+
+function createCrownMesh() {
+  const g = new THREE.Group();
+  // Crown base ring
+  const base = new THREE.Mesh(
+    new THREE.TorusGeometry(0.7, 0.12, 8, 16),
+    new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 })
+  );
+  base.rotation.x = Math.PI / 2;
+  g.add(base);
+  // Crown points (5 spikes)
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2;
+    const spike = new THREE.Mesh(
+      new THREE.ConeGeometry(0.15, 0.6, 4),
+      new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 })
+    );
+    spike.position.set(Math.cos(angle) * 0.7, 0.3, Math.sin(angle) * 0.7);
+    g.add(spike);
+    // Gem on top of each spike
+    const gem = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 6, 6),
+      new THREE.MeshStandardMaterial({ color: i % 2 === 0 ? 0xff2244 : 0x2244ff, metalness: 0.5, roughness: 0.3 })
+    );
+    gem.position.set(Math.cos(angle) * 0.7, 0.6, Math.sin(angle) * 0.7);
+    g.add(gem);
+  }
+  g.scale.setScalar(1.8);
+  return g;
+}
+
+function updateCrown() {
+  // Find #1 player by totalCollected
+  const allPlayers = [localPlayer, ...bots];
+  let leader = allPlayers[0];
+  for (const p of allPlayers) {
+    if (p.totalCollected > leader.totalCollected) leader = p;
+  }
+  // Only show crown if leader has collected something
+  if (leader.totalCollected <= 0) {
+    if (crownMesh) crownMesh.visible = false;
+    crownTargetId = null;
+    return;
+  }
+
+  if (!crownMesh) {
+    crownMesh = createCrownMesh();
+    scene.add(crownMesh);
+  }
+  crownMesh.visible = true;
+  crownTargetId = leader.id;
+
+  const wy = getWaveHeight(leader.x, leader.z, gameTime);
+  const floatY = wy + 5.5 + Math.sin(gameTime * 2) * 0.3; // float above head
+  crownMesh.position.set(leader.x, floatY, leader.z);
+  crownMesh.rotation.y += 0.02; // slow spin
+}
+
+// ============================================================
 // 14. MAIN GAME LOOP
 // ============================================================
 let lastTime       = 0;
@@ -2419,6 +2486,7 @@ function gameLoop(timestamp) {
 
   // Labels / floating texts
   updateEntityLabels();
+  updateCrown();
   updateFloatingTexts(dt);
 
   // Render
