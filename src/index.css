@@ -1,0 +1,147 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --background: 210 50% 6%;
+    --foreground: 195 80% 90%;
+
+    --card: 210 45% 10%;
+    --card-foreground: 195 80% 90%;
+
+    --popover: 210 45% 10%;
+    --popover-foreground: 195 80% 90%;
+
+    --primary: 185 70% 45%;
+    --primary-foreground: 210 50% 6%;
+
+    --secondary: 210 40% 16%;
+    --secondary-foreground: 195 60% 80%;
+
+    --muted: 210 35% 14%;
+    --muted-foreground: 210 20% 55%;
+
+    --accent: 160 60% 45%;
+    --accent-foreground: 210 50% 6%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --warning: 40 90% 55%;
+    --warning-foreground: 210 50% 6%;
+
+    --ocean-deep: 210 60% 8%;
+    --ocean-surface: 195 70% 30%;
+    --ocean-foam: 185 40% 80%;
+    --health-bar: 120 60% 45%;
+    --health-bar-low: 0 70% 50%;
+    --xp-bar: 50 80% 55%;
+
+    --border: 210 30% 20%;
+    --input: 210 30% 20%;
+    --ring: 185 70% 45%;
+    --radius: 0.75rem;
+
+    --sidebar-background: 210 50% 6%;
+    --sidebar-foreground: 195 80% 90%;
+    --sidebar-primary: 185 70% 45%;
+    --sidebar-primary-foreground: 210 50% 6%;
+    --sidebar-accent: 210 40% 16%;
+    --sidebar-accent-foreground: 195 60% 80%;
+    --sidebar-border: 210 30% 20%;
+    --sidebar-ring: 185 70% 45%;
+
+    --font-heading: 'Orbitron', monospace;
+    --font-body: 'Inter', sans-serif;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    overflow: hidden;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+}
+
+@layer components {
+  .game-panel {
+    @apply bg-card/80 backdrop-blur-md border border-border rounded-lg;
+  }
+  .health-bar-fill {
+    background: linear-gradient(90deg, hsl(var(--health-bar-low)), hsl(var(--health-bar)));
+    transition: width 0.3s ease;
+  }
+  .health-bar-critical {
+    background: hsl(var(--health-bar-low));
+    animation: pulse-health 0.5s ease-in-out infinite alternate;
+  }
+  .xp-bar-fill {
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--xp-bar)));
+    transition: width 0.3s ease;
+  }
+  .leaderboard-row {
+    @apply flex items-center gap-2 px-3 py-1.5 text-sm;
+  }
+  .leaderboard-self {
+    @apply bg-primary/20 border border-primary/40 rounded;
+  }
+}
+
+@keyframes pulse-health {
+  from { opacity: 1; }
+  to { opacity: 0.6; }
+}
+
+@keyframes floatFade {
+  0% { opacity: 1; transform: scale(1); }
+  60% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 0; transform: scale(0.8); }
+}
+
+/* Punch-in scale for damage hits */
+@keyframes floatPunchDamage {
+  0%   { opacity: 0; transform: scale(2.2) translateY(0); }
+  8%   { opacity: 1; transform: scale(1.5) translateY(0); }
+  20%  { opacity: 1; transform: scale(1)   translateY(0); }
+  65%  { opacity: 1; transform: scale(1)   translateY(-6px); }
+  100% { opacity: 0; transform: scale(0.7) translateY(-14px); }
+}
+
+/* Gentler float for steal/positive events */
+@keyframes floatPunchSteal {
+  0%   { opacity: 0; transform: scale(1.8) translateY(0); }
+  10%  { opacity: 1; transform: scale(1.2) translateY(0); }
+  25%  { opacity: 1; transform: scale(1)   translateY(0); }
+  70%  { opacity: 1; transform: scale(1)   translateY(-5px); }
+  100% { opacity: 0; transform: scale(0.8) translateY(-12px); }
+}
+
+@keyframes floatPunch {
+  0%   { opacity: 0; transform: scale(1.4); }
+  15%  { opacity: 1; transform: scale(1); }
+  75%  { opacity: 1; }
+  100% { opacity: 0; transform: scale(0.8); }
+}
+
+@keyframes vignetteFlash {
+  0% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+@keyframes shakeX {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
