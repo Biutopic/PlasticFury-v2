@@ -179,10 +179,11 @@
       transition: opacity 0.2s ease-out;
     }
     @keyframes heal-glow {
-      0%   { opacity: 1; box-shadow: inset 0 0 80px rgba(255,102,170,0.6); }
+      0%   { opacity: 1; box-shadow: inset 0 0 150px rgba(255,102,170,0.7); }
+      50%  { opacity: 0.8; box-shadow: inset 0 0 100px rgba(255,102,170,0.5); }
       100% { opacity: 0; box-shadow: inset 0 0 0px rgba(255,102,170,0.0); }
     }
-    #heal-vignette.active { animation: heal-glow 0.7s ease-out forwards; }
+    #heal-vignette.active { animation: heal-glow 1.0s ease-out forwards; }
 
     /* ---- SCREEN SHAKE ---- */
     @keyframes screen-shake {
@@ -334,6 +335,24 @@
     }
     #combo-display.active { opacity: 1; }
 
+    /* ---- LOW HP WARNING ---- */
+    #low-hp-warning {
+      position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+      z-index: 20; padding: 10px 24px;
+      font-family: var(--font-heading); font-size: 1.1rem; font-weight: 700;
+      color: #ff66aa; text-shadow: 0 0 10px rgba(255,102,170,0.6);
+      background: rgba(0,0,0,0.5); border: 1px solid rgba(255,102,170,0.4);
+      border-radius: 8px;
+      opacity: 0; transition: opacity 0.4s;
+      pointer-events: none;
+    }
+    #low-hp-warning.active { opacity: 1; }
+    @keyframes warning-pulse {
+      0%, 100% { text-shadow: 0 0 10px rgba(255,102,170,0.6); }
+      50%      { text-shadow: 0 0 25px rgba(255,102,170,1.0); }
+    }
+    #low-hp-warning.active { animation: warning-pulse 1.5s infinite; }
+
     /* ---- hidden ---- */
     [hidden] { display: none !important; }
   </style>
@@ -383,6 +402,7 @@
   <!-- Hit vignette -->
   <div id="hit-vignette"></div>
   <div id="heal-vignette"></div>
+  <div id="low-hp-warning">Pick up PINK trash to restore HP!</div>
 
   <!-- Respawn overlay -->
   <div id="respawn-overlay" hidden>
@@ -869,15 +889,73 @@ function checkBoatCollisions(players, now) {
 function handleDeath(player) {
   if (player.health > 0) return false;
   if (player.id === 'local') showRespawn();
+
+  // Explode 30% of plastic around death location as pickups
+  const dropCount = Math.floor(player.plasticCount * 0.3);
+  if (dropCount > 0) {
+    const deathX = player.x, deathZ = player.z;
+    for (let i = 0; i < Math.min(dropCount, 15); i++) { // cap at 15 items
+      const a = Math.random() * Math.PI * 2;
+      const r = 3 + Math.random() * 8;
+      const g = {
+        id: 'g_' + (garbageIdCounter++),
+        x: deathX + Math.cos(a) * r,
+        z: deathZ + Math.sin(a) * r,
+        type: randomGarbageType(),
+        bobOffset: Math.random() * Math.PI * 2,
+        fbxIdx: (garbageFBXLoaded && garbageFBXMeshes.length > 0)
+          ? Math.floor(Math.random() * garbageFBXMeshes.length) : -1,
+        size: 'small',
+        points: Math.max(1, Math.ceil(dropCount / Math.min(dropCount, 15))),
+        isHeal: false,
+      };
+      garbage.push(g);
+      addGarbageMesh(g);
+    }
+    // Death explosion particles
+    spawnDeathExplosion(deathX, deathZ);
+  }
+
   player.health = MAX_HEALTH;
-  player.plasticCount = 0;
+  player.plasticCount = Math.floor(player.plasticCount * 0.7); // keep 70%
   const angle = Math.random() * Math.PI * 2;
   player.x = Math.cos(angle) * 30;
   player.z = Math.sin(angle) * 30;
   player.vx = 0; player.vz = 0;
   player.lastHitTime = -999;
-  player.boostEnergy = 1;
+  player.boostEnergy = 0.5;
   return true;
+}
+
+function spawnDeathExplosion(x, z) {
+  const wy = getWaveHeight(x, z, gameTime);
+  for (let i = 0; i < 20; i++) {
+    const size = 0.15 + Math.random() * 0.2;
+    const pGeom = new THREE.SphereGeometry(size, 6, 6);
+    const colors = [0xff6633, 0xffaa00, 0xffdd44, 0xff4444, 0xffffff];
+    const pMat = new THREE.MeshBasicMaterial({ color: colors[Math.floor(Math.random() * colors.length)], transparent: true, opacity: 1 });
+    const p = new THREE.Mesh(pGeom, pMat);
+    p.position.set(x, wy + 1, z);
+    scene.add(p);
+    const speed = 3 + Math.random() * 6;
+    const ang = Math.random() * Math.PI * 2;
+    const vx = Math.cos(ang) * speed;
+    const vy = 3 + Math.random() * 5;
+    const vz = Math.sin(ang) * speed;
+    const start = performance.now();
+    const dur = 0.6 + Math.random() * 0.4;
+    (function animate() {
+      const elapsed = (performance.now() - start) / 1000;
+      if (elapsed > dur) { scene.remove(p); return; }
+      const t = elapsed / dur;
+      p.position.x += vx * 0.016;
+      p.position.y += (vy - 9.8 * elapsed) * 0.016; // gravity
+      p.position.z += vz * 0.016;
+      p.material.opacity = 1 - t;
+      p.scale.setScalar(1 + t * 0.5);
+      requestAnimationFrame(animate);
+    })();
+  }
 }
 
 function regenHealth(player, now, dt, upgrades) {
@@ -1807,6 +1885,8 @@ const lbRowsEl     = document.getElementById('lb-rows');
 const timerEl      = document.getElementById('timer-display');
 const comboEl      = document.getElementById('combo-display');
 
+const lowHpWarningEl = document.getElementById('low-hp-warning');
+
 function updateHUD() {
   hudNameEl.textContent = localPlayer.name + ' Lv ' + localPlayer.boatLevel;
 
@@ -1819,6 +1899,13 @@ function updateHUD() {
   hudBoostEl.className   = 'hud-bar-fill bar-boost' + (bPct < 30 ? ' low' : bPct < 60 ? ' mid' : '');
 
   hudTotalEl.textContent = localPlayer.totalCollected;
+
+  // Low HP warning — show at 25% or below
+  if (hpPct <= 25 && hpPct > 0) {
+    lowHpWarningEl.classList.add('active');
+  } else {
+    lowHpWarningEl.classList.remove('active');
+  }
 }
 
 function updateLeaderboard() {
@@ -1882,35 +1969,38 @@ function triggerHealEffect(x, z) {
   v.classList.remove('active');
   void v.offsetWidth; // force reflow to restart animation
   v.classList.add('active');
-  setTimeout(() => v.classList.remove('active'), 700);
+  setTimeout(() => v.classList.remove('active'), 1000);
 
-  // 3D sparkle particles rising from pickup
+  // 3D sparkle particles — big burst rising from pickup
   const wy = getWaveHeight(x, z, gameTime);
-  for (let i = 0; i < 8; i++) {
-    const pGeom = new THREE.SphereGeometry(0.1, 6, 6);
-    const pMat = new THREE.MeshBasicMaterial({ color: 0xff66aa, transparent: true, opacity: 1 });
+  for (let i = 0; i < 18; i++) {
+    const size = 0.15 + Math.random() * 0.2;
+    const pGeom = new THREE.SphereGeometry(size, 6, 6);
+    const hueShift = Math.random() > 0.5 ? 0xff66aa : 0xff99cc;
+    const pMat = new THREE.MeshBasicMaterial({ color: hueShift, transparent: true, opacity: 1 });
     const p = new THREE.Mesh(pGeom, pMat);
     p.position.set(
-      x + (Math.random() - 0.5) * 1.5,
+      x + (Math.random() - 0.5) * 2.5,
       wy + 0.5,
-      z + (Math.random() - 0.5) * 1.5
+      z + (Math.random() - 0.5) * 2.5
     );
     scene.add(p);
-    const vx = (Math.random() - 0.5) * 2;
-    const vy = 2 + Math.random() * 3;
-    const vz = (Math.random() - 0.5) * 2;
+    const pvx = (Math.random() - 0.5) * 4;
+    const pvy = 3 + Math.random() * 5;
+    const pvz = (Math.random() - 0.5) * 4;
     const start = performance.now();
-    function animHeal() {
+    const dur = 0.8 + Math.random() * 0.4;
+    (function animHeal() {
       const elapsed = (performance.now() - start) / 1000;
-      if (elapsed > 0.8) { scene.remove(p); return; }
-      p.position.x += vx * 0.016;
-      p.position.y += vy * 0.016;
-      p.position.z += vz * 0.016;
-      p.material.opacity = 1 - elapsed / 0.8;
-      p.scale.setScalar(1 - elapsed / 0.8);
+      if (elapsed > dur) { scene.remove(p); return; }
+      const t = elapsed / dur;
+      p.position.x += pvx * 0.016;
+      p.position.y += pvy * 0.016;
+      p.position.z += pvz * 0.016;
+      p.material.opacity = 1 - t;
+      p.scale.setScalar(1 + t * 0.3);
       requestAnimationFrame(animHeal);
-    }
-    requestAnimationFrame(animHeal);
+    })();
   }
 }
 
@@ -2102,9 +2192,9 @@ function gameLoop(timestamp) {
   if (playerMesh) {
     const wy   = getWaveHeight(localPlayer.x, localPlayer.z, gameTime);
     const tilt = getWaveTilt(localPlayer.x, localPlayer.z, gameTime);
-    // Buoyancy: boat sits higher at full HP, sinks as HP drops
+    // Buoyancy: boat sits high at full HP, nearly sinks at low HP
     const hpRatio = Math.max(0, localPlayer.health / MAX_HEALTH);
-    const buoyancy = 1.2 * hpRatio + 0.1 * (1 - hpRatio); // 1.2 at full HP, 0.1 at 0 HP
+    const buoyancy = 1.4 * hpRatio - 1.8 * (1 - hpRatio); // 1.4 at full HP, -1.8 at 0 HP
     playerMesh.position.set(localPlayer.x, wy + buoyancy, localPlayer.z);
     // When using GLTF template, its base rotation is baked in via clone, but we override .rotation each frame:
     const baseYRot = boatModelTemplate ? -Math.PI / 2 : 0;
@@ -2128,7 +2218,7 @@ function gameLoop(timestamp) {
     const tilt = getWaveTilt(bot.x, bot.z, gameTime);
     // Buoyancy: sinks as HP drops
     const botHpRatio = Math.max(0, bot.health / MAX_HEALTH);
-    const botBuoyancy = 1.2 * botHpRatio + 0.1 * (1 - botHpRatio);
+    const botBuoyancy = 1.4 * botHpRatio - 1.8 * (1 - botHpRatio);
     mesh.position.set(bot.x, wy + botBuoyancy, bot.z);
     const baseYRot = boatModelTemplate ? -Math.PI / 2 : 0;
     mesh.rotation.set(tilt.tiltX, bot.rotation + baseYRot, tilt.tiltZ);
