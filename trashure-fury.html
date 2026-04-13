@@ -1537,7 +1537,16 @@ function addGarbageMesh(g) {
   } else {
     mesh = createProceduralGarbage(g.type);
   }
-  mesh.position.set(g.x, 0.3, g.z);
+  mesh.position.set(g.x, 0, g.z);
+  // Random tilt so pieces don't all stand upright — looks like floating debris
+  mesh.rotation.set(
+    (Math.random() - 0.5) * 1.2,   // tilt forward/back
+    Math.random() * Math.PI * 2,     // random Y spin
+    (Math.random() - 0.5) * 1.2      // tilt left/right
+  );
+  // Store the initial tilt so we can preserve it during updates
+  mesh.userData.tiltX = mesh.rotation.x;
+  mesh.userData.tiltZ = mesh.rotation.z;
   scene.add(mesh);
   garbageMeshes.set(g.id, mesh);
 }
@@ -2082,9 +2091,12 @@ function gameLoop(timestamp) {
     const mesh = garbageMeshes.get(g.id);
     if (mesh) {
       const wy  = getWaveHeight(g.x, g.z, gameTime);
-      const bob = Math.sin(gameTime * 1.5 + g.bobOffset) * 0.15;
-      mesh.position.y = wy + 0.3 + bob;
-      mesh.rotation.y += dt * 0.5;
+      const bob = Math.sin(gameTime * 1.5 + g.bobOffset) * 0.08;
+      mesh.position.y = wy - 0.05 + bob;  // sit on the water surface, slightly submerged
+      // Slow spin on Y while keeping the initial random tilt
+      mesh.rotation.x = (mesh.userData.tiltX || 0) + Math.sin(gameTime * 0.7 + g.bobOffset) * 0.06;
+      mesh.rotation.y += dt * 0.3;
+      mesh.rotation.z = (mesh.userData.tiltZ || 0) + Math.cos(gameTime * 0.5 + g.bobOffset) * 0.06;
     }
   }
 
