@@ -502,7 +502,7 @@ const BOAT_COLLISION_EXTENTS = {
 };
 const GARBAGE_COLLECT_MARGIN = 1.5;
 
-const BOT_COUNT = 1;
+const BOT_COUNT = 4;
 const BOT_NAMES = ['Hydronaute', 'Coral', 'Marlin', 'Triton', 'Dory', 'Splash', 'Reef', 'Bubbles'];
 
 const PIRATE_COUNT = 1;
@@ -985,34 +985,86 @@ function regenHealth(player, now, dt, upgrades) {
 // 5. BOT AI
 // ============================================================
 function getBotBrain(id) {
-  if (!botBrains.has(id)) botBrains.set(id, { targetGarbageId: null, decisionTimer: 0 });
+  if (!botBrains.has(id)) botBrains.set(id, {
+    targetGarbageId: null, decisionTimer: 0,
+    attackTargetId: null, attackTimer: 0,
+    mode: 'collect', // 'collect' or 'attack'
+  });
   return botBrains.get(id);
 }
 
 function computeBotInput(bot, dt) {
   const brain = getBotBrain(bot.id);
   brain.decisionTimer -= dt;
+  brain.attackTimer -= dt;
   const inp = { forward: true, backward: false, left: false, right: false, boost: false };
 
-  if (brain.decisionTimer <= 0 || !garbage.find(g => g.id === brain.targetGarbageId)) {
+  // Decide mode: attack nearby players when we have boost, otherwise collect
+  if (brain.decisionTimer <= 0) {
     brain.decisionTimer = 1.5 + Math.random() * 2;
-    let nearest = null, nd = Infinity;
-    for (const g of garbage) {
-      const dx = bot.x - g.x, dz = bot.z - g.z;
-      const d = dx * dx + dz * dz;
-      if (d < nd) { nd = d; nearest = g; }
+    brain.mode = 'collect';
+
+    // Look for nearby players to attack (if we have boost energy)
+    if (bot.boostEnergy > 0.3) {
+      const allTargets = [localPlayer, ...bots].filter(p => p.id !== bot.id && p.health > 0);
+      let nearestEnemy = null, ned = Infinity;
+      for (const p of allTargets) {
+        const dx = bot.x - p.x, dz = bot.z - p.z;
+        const d = dx * dx + dz * dz;
+        if (d < ned && d < 900) { ned = d; nearestEnemy = p; } // within 30 units
+      }
+      if (nearestEnemy && Math.random() < 0.4) { // 40% chance to go aggressive
+        brain.mode = 'attack';
+        brain.attackTargetId = nearestEnemy.id;
+      }
     }
-    brain.targetGarbageId = nearest ? nearest.id : null;
+
+    // Pick garbage target
+    if (brain.mode === 'collect') {
+      let nearest = null, nd = Infinity;
+      for (const g of garbage) {
+        const dx = bot.x - g.x, dz = bot.z - g.z;
+        const d = dx * dx + dz * dz;
+        if (d < nd) { nd = d; nearest = g; }
+      }
+      brain.targetGarbageId = nearest ? nearest.id : null;
+    }
   }
 
-  const tgt = garbage.find(g => g.id === brain.targetGarbageId);
-  if (tgt) {
-    const dx = tgt.x - bot.x, dz = tgt.z - bot.z;
-    let diff = Math.atan2(dx, dz) - bot.rotation;
-    while (diff >  Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    if (diff > 0.1) inp.left = true;
-    else if (diff < -0.1) inp.right = true;
+  if (brain.mode === 'attack') {
+    // Chase and ram the target with boost
+    const enemy = [localPlayer, ...bots].find(p => p.id === brain.attackTargetId);
+    if (enemy && enemy.health > 0) {
+      const dx = enemy.x - bot.x, dz = enemy.z - bot.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      let diff = Math.atan2(dx, dz) - bot.rotation;
+      while (diff >  Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      if (diff > 0.1) inp.left = true;
+      else if (diff < -0.1) inp.right = true;
+      // Boost when aimed at target and close enough
+      if (Math.abs(diff) < 0.4 && dist < 25 && bot.boostEnergy > 0.1) {
+        inp.boost = true;
+      }
+    } else {
+      brain.mode = 'collect'; // target dead or gone
+    }
+  }
+
+  if (brain.mode === 'collect') {
+    // Also check if target garbage still exists
+    if (!garbage.find(g => g.id === brain.targetGarbageId)) {
+      brain.decisionTimer = 0; // re-decide next frame
+    }
+    const tgt = garbage.find(g => g.id === brain.targetGarbageId);
+    if (tgt) {
+      const dx = tgt.x - bot.x, dz = tgt.z - bot.z;
+      let diff = Math.atan2(dx, dz) - bot.rotation;
+      while (diff >  Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      if (diff > 0.1) inp.left = true;
+      else if (diff < -0.1) inp.right = true;
+    }
   }
   return inp;
 }
