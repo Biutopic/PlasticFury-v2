@@ -493,15 +493,15 @@ const CAMERA_HEIGHT = 12;
 const CAMERA_FOLLOW_DISTANCE = 26;
 const CAMERA_LOOK_Y = -4;
 
-// Collision boxes sized to match the GLTF boat model at scale 10.0
+// Collision boxes — match visible hull of GLTF boat at scale 10.0
 const BOAT_COLLISION_EXTENTS = {
-  1: { halfW: 2.5,  halfL: 5.0  },
-  2: { halfW: 2.9,  halfL: 5.8  },
-  3: { halfW: 3.2,  halfL: 6.5  },
-  4: { halfW: 3.6,  halfL: 7.2  },
-  5: { halfW: 4.0,  halfL: 8.0  },
+  1: { halfW: 1.5,  halfL: 3.5  },
+  2: { halfW: 1.7,  halfL: 4.0  },
+  3: { halfW: 1.9,  halfL: 4.5  },
+  4: { halfW: 2.1,  halfL: 5.0  },
+  5: { halfW: 2.4,  halfL: 5.5  },
 };
-const GARBAGE_COLLECT_MARGIN = 3.0;
+const GARBAGE_COLLECT_MARGIN = 2.0;
 
 const BOT_COUNT = 1;
 const BOT_NAMES = ['Hydronaute', 'Coral', 'Marlin', 'Triton', 'Dory', 'Splash', 'Reef', 'Bubbles'];
@@ -510,7 +510,7 @@ const PIRATE_COUNT = 1;
 const PIRATE_CHASE_DURATION = 20;
 const PIRATE_SPEED = 10;
 const PIRATE_TURN_SPEED = 2.0;
-const PIRATE_COLLISION_EXTENTS = { halfW: 4.0, halfL: 10.0 };
+const PIRATE_COLLISION_EXTENTS = { halfW: 2.5, halfL: 6.0 };
 const PIRATE_COLLISION_DAMAGE = 25;
 
 const PIRATE_BOMB_DAMAGE = 15;
@@ -899,7 +899,7 @@ function checkBoatCollisions(players, now) {
 
         // Push each boat out by half the overlap + extra margin
         const overlapMag = Math.sqrt(hit.pushX * hit.pushX + hit.pushZ * hit.pushZ);
-        const pushDist = overlapMag * 0.5 + 0.5; // half overlap + 0.5 margin
+        const pushDist = overlapMag * 0.55 + 0.3; // half overlap + small margin
         a.x += sepX * pushDist;
         a.z += sepZ * pushDist;
         b.x -= sepX * pushDist;
