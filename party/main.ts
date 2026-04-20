@@ -18,7 +18,7 @@ type Phase = "LOBBY" | "COUNTDOWN" | "PLAYING" | "RECAP";
 
 type Seat =
   | { kind: "empty" }
-  | { kind: "human"; id: string; name: string; ready: boolean; color: string }
+  | { kind: "human"; id: string; pid: string; name: string; ready: boolean; color: string }
   | { kind: "bot"; name: string; color: string };
 
 interface RoomState {
@@ -32,7 +32,10 @@ interface RoomState {
 }
 
 // Phase durations (ms)
-const LOBBY_MAX_MS     = 30_000; // max time to wait once >=2 humans are in
+// LOBBY has no auto-timeout: rounds only start when every human clicks
+// READY. The server sets phaseEndsAt to a "quick start" value once the
+// last human readies up, used only for the ~1.5 s settle before the 3-2-1.
+const QUICK_START_MS   = 1_500;
 const COUNTDOWN_MS     = 3_000;
 const PLAYING_MS       = 180_000; // 3 minutes
 const RECAP_MS         = 15_000;
@@ -50,7 +53,8 @@ function makeBotSeats(): Seat[] {
 function initialState(): RoomState {
   return {
     phase: "LOBBY",
-    phaseEndsAt: Date.now() + LOBBY_MAX_MS,
+    // 0 = no countdown armed. Server arms it only when all humans are ready.
+    phaseEndsAt: 0,
     seats: makeBotSeats(),
   };
 }
@@ -89,10 +93,27 @@ export default class TrashureRoom implements Party.Server {
   }
 
   // ---- lifecycle ----
-  onConnect(conn: Party.Connection, _ctx: Party.ConnectionContext) {
-    // Replace the first bot seat (or empty slot) with a placeholder
-    // human. Display name + ready flag get filled in by the "hello"
-    // message that follows immediately.
+  onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
+    // Client sends a persistent id in the WS URL query. On reconnect
+    // (e.g. short network drop), we match on pid and re-seat the same
+    // player instead of letting a ghost seat pile up.
+    let pid = "";
+    try { pid = new URL(ctx.request.url).searchParams.get("pid") || ""; } catch {}
+
+    if (pid) {
+      const existingIdx = this.state.seats.findIndex(
+        (s) => s.kind === "human" && (s as any).pid === pid
+      );
+      if (existingIdx !== -1) {
+        const seat = this.state.seats[existingIdx] as Extract<Seat, { kind: "human" }>;
+        seat.id = conn.id;
+        seat.ready = false; // don't carry over stale ready on reconnect
+        this.startTicker();
+        this.broadcastState();
+        return;
+      }
+    }
+
     const idx = this.state.seats.findIndex((s) => s.kind === "bot" || s.kind === "empty");
     if (idx === -1) {
       // All 4 seats are human — send them in as a spectator.
@@ -101,13 +122,7 @@ export default class TrashureRoom implements Party.Server {
       return;
     }
     const color = COLORS[idx % COLORS.length];
-    const beforeCount = humanCount(this.state);
-    this.state.seats[idx] = { kind: "human", id: conn.id, name: "Capitaine", ready: false, color };
-    // Starting the 30s lobby window: only once we actually have enough
-    // players to potentially begin. Solo lobby just sits waiting.
-    if (this.state.phase === "LOBBY" && beforeCount < MIN_HUMANS_TO_START && humanCount(this.state) >= MIN_HUMANS_TO_START) {
-      this.state.phaseEndsAt = Date.now() + LOBBY_MAX_MS;
-    }
+    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color };
     this.startTicker();
     this.broadcastState();
   }
@@ -127,10 +142,12 @@ export default class TrashureRoom implements Party.Server {
 
     if (data.type === "ready" && seat?.kind === "human" && this.state.phase === "LOBBY") {
       seat.ready = !!data.value;
-      // Short-circuit the lobby countdown when every human is ready.
+      // Arm the quick-start countdown only when every human is ready.
+      // If someone un-readies, disarm it.
       if (allHumansReady(this.state)) {
-        const quickStart = Date.now() + 1_500;
-        if (quickStart < this.state.phaseEndsAt) this.state.phaseEndsAt = quickStart;
+        this.state.phaseEndsAt = Date.now() + QUICK_START_MS;
+      } else {
+        this.state.phaseEndsAt = 0;
       }
       this.broadcastState();
       return;
@@ -147,10 +164,10 @@ export default class TrashureRoom implements Party.Server {
     if (idx !== -1) {
       const prev = this.state.seats[idx] as Extract<Seat, { kind: "human" }>;
       this.state.seats[idx] = { kind: "bot", name: prev.name, color: prev.color };
-      // Ready-check may now pass if the dropped human was the blocker.
-      if (this.state.phase === "LOBBY" && allHumansReady(this.state)) {
-        const quickStart = Date.now() + 1_500;
-        if (quickStart < this.state.phaseEndsAt) this.state.phaseEndsAt = quickStart;
+      // If the drop breaks the all-ready condition, disarm the quick
+      // start so the remaining players aren't catapulted out of lobby.
+      if (this.state.phase === "LOBBY" && !allHumansReady(this.state)) {
+        this.state.phaseEndsAt = 0;
       }
       this.broadcastState();
     }
@@ -161,27 +178,53 @@ export default class TrashureRoom implements Party.Server {
     }
   }
 
+  // Drop human seats whose connection is no longer live. Covers the case
+  // where a tab closes hard (OS kill, crash, network loss) and onClose
+  // doesn't fire cleanly — prevents "ghost" seats from blocking lobby
+  // logic for other players.
+  private reapStaleSeats(): boolean {
+    const active = new Set<string>();
+    for (const c of this.room.getConnections()) active.add(c.id);
+    let changed = false;
+    for (let i = 0; i < this.state.seats.length; i++) {
+      const s = this.state.seats[i];
+      if (s.kind === "human" && !active.has(s.id)) {
+        const prev = s;
+        this.state.seats[i] = { kind: "bot", name: prev.name, color: prev.color };
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   // ---- state machine ----
   private tick() {
     const now = Date.now();
-    // Solo lobby never auto-advances — we need at least MIN_HUMANS_TO_START
-    // in the room before the 30s timer means anything. The client shows a
-    // "Play offline" button for solo players who don't want to wait.
-    if (this.state.phase === "LOBBY" && humanCount(this.state) < MIN_HUMANS_TO_START) {
-      // Keep the ticker alive (for state updates) but don't transition.
-      return;
+    // Clean up ghost seats first so the "all ready" check below is honest.
+    if (this.reapStaleSeats()) {
+      // If a ghost being reaped breaks the all-ready condition, disarm
+      // the quick-start so the remaining solo player isn't catapulted
+      // into a round with no real opponent.
+      if (this.state.phase === "LOBBY" && !allHumansReady(this.state)) {
+        this.state.phaseEndsAt = 0;
+      }
+      this.broadcastState();
     }
-    if (now < this.state.phaseEndsAt) return;
+    // LOBBY never auto-advances on a clock. The only trigger is "all
+    // humans ready" (and there must be >= MIN_HUMANS_TO_START), which
+    // arms phaseEndsAt to now + QUICK_START_MS in the ready handler.
+    if (this.state.phase === "LOBBY") {
+      if (this.state.phaseEndsAt === 0) return;
+      if (now < this.state.phaseEndsAt) return;
+    } else {
+      if (now < this.state.phaseEndsAt) return;
+    }
     switch (this.state.phase) {
       case "LOBBY":
-        if (humanCount(this.state) === 0) {
-          // No one ever joined during the window — reset and idle.
-          this.state = initialState();
-          this.stopTicker();
-        } else {
-          this.state.phase = "COUNTDOWN";
-          this.state.phaseEndsAt = now + COUNTDOWN_MS;
-        }
+        // By construction we only get here when phaseEndsAt was armed
+        // by all-ready. Advance to the 3-2-1 countdown.
+        this.state.phase = "COUNTDOWN";
+        this.state.phaseEndsAt = now + COUNTDOWN_MS;
         break;
       case "COUNTDOWN":
         this.state.phase = "PLAYING";
@@ -198,7 +241,8 @@ export default class TrashureRoom implements Party.Server {
         for (let i = 0; i < 4; i++) {
           if (keptHumans[i] && keptHumans[i].kind === "human") this.state.seats[i] = keptHumans[i];
         }
-        this.state.phaseEndsAt = now + LOBBY_MAX_MS;
+        // Lobby waits for ready clicks again, no auto-timer.
+        this.state.phaseEndsAt = 0;
         break;
     }
     this.broadcastState();

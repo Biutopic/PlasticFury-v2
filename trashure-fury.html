@@ -13059,13 +13059,29 @@ const _mp = {
   reconnectTimer: null,
 };
 
+// Per-tab persistent ID. sessionStorage scopes it to one tab, so two
+// tabs on the same machine intentionally get two different seats, but
+// a reconnect inside the same tab reclaims its old seat.
+function _mpPid() {
+  let pid = null;
+  try { pid = sessionStorage.getItem('ti_pid'); } catch (e) {}
+  if (!pid) {
+    pid = 'p_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+    try { sessionStorage.setItem('ti_pid', pid); } catch (e) {}
+  }
+  return pid;
+}
 function _mpResolveUrl() {
+  const pidQ = 'pid=' + encodeURIComponent(_mpPid());
   try {
     const qs = new URLSearchParams(location.search);
-    if (qs.get('mp')) return qs.get('mp');
+    if (qs.get('mp')) {
+      const base = qs.get('mp');
+      return base + (base.includes('?') ? '&' : '?') + pidQ;
+    }
   } catch (e) {}
   const host = MP_DEFAULT_HOST;
-  return 'wss://' + host + '/parties/main/' + encodeURIComponent(MP_ROOM_ID);
+  return 'wss://' + host + '/parties/main/' + encodeURIComponent(MP_ROOM_ID) + '?' + pidQ;
 }
 
 function _mpGrabEls() {
@@ -13188,10 +13204,17 @@ function _mpStartTickingTimer() {
       return requestAnimationFrame(tick);
     }
     if (_mp.wrTimer) {
-      const left = Math.max(0, Math.round((_mp.phaseEndsAt - Date.now()) / 1000));
-      const mm = Math.floor(left / 60);
-      const ss = left % 60;
-      _mp.wrTimer.textContent = mm + ':' + String(ss).padStart(2, '0');
+      if (!_mp.phaseEndsAt || _mp.phaseEndsAt <= 0) {
+        // No countdown armed — show a dim placeholder instead of 0:00.
+        _mp.wrTimer.textContent = '\u2014:\u2014';
+        _mp.wrTimer.style.opacity = '0.35';
+      } else {
+        const left = Math.max(0, Math.round((_mp.phaseEndsAt - Date.now()) / 1000));
+        const mm = Math.floor(left / 60);
+        const ss = left % 60;
+        _mp.wrTimer.textContent = mm + ':' + String(ss).padStart(2, '0');
+        _mp.wrTimer.style.opacity = '1';
+      }
     }
     requestAnimationFrame(tick);
   };
@@ -14103,7 +14126,7 @@ const I18N_STRINGS = {
     wr_unready_btn: 'PAS PR\u00CAT',
     wr_solo_btn: 'Jouer en solo',
     wr_leave_btn: 'Quitter',
-    wr_hint: 'Les si\u00E8ges vides sont remplis par des bots. La manche d\u00E9marre quand <b>au moins 2 joueurs</b> sont pr\u00EAts.',
+    wr_hint: 'Les si\u00E8ges vides sont remplis par des bots. La manche d\u00E9marre uniquement quand <b>tous les joueurs</b> ont cliqu\u00E9 PR\u00CAT (minimum 2).',
     wr_hint_waiting_solo: 'En attente d\u2019un autre joueur... Tu peux cliquer <b>Jouer en solo</b> pour d\u00E9marrer tout de suite contre des bots.',
     wr_hint_playing: 'Une manche est en cours. Tu joueras \u00E0 la prochaine.',
     wr_hint_recap: 'R\u00E9cap de la manche en cours. Prochaine manche dans un instant.',
@@ -14220,7 +14243,7 @@ const I18N_STRINGS = {
     wr_unready_btn: 'NOT READY',
     wr_solo_btn: 'Play solo',
     wr_leave_btn: 'Leave',
-    wr_hint: 'Empty seats are filled by bots. The round starts when <b>at least 2 players</b> are ready.',
+    wr_hint: 'Empty seats are filled by bots. The round only starts when <b>all players</b> click READY (minimum 2).',
     wr_hint_waiting_solo: 'Waiting for another player... You can click <b>Play solo</b> to start against bots now.',
     wr_hint_playing: 'A round is in progress. You\u2019ll join the next one.',
     wr_hint_recap: 'Round recap in progress. Next round starts shortly.',
