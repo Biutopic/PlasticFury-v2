@@ -1226,21 +1226,58 @@
     #combo-display.active { opacity: 1; }
 
     /* ---- BEGINNER TIPS ---- */
-    #tips-display {
-      position: fixed; bottom: 20px; right: 16px;
-      z-index: 18; padding: 10px 18px;
-      font-family: var(--font-body); font-size: 0.85rem; font-weight: 600;
-      color: rgba(255,255,255,0.9);
-      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
-      background: rgba(0,20,40,0.7);
-      border: 1px solid rgba(0,200,255,0.25);
-      border-radius: 10px;
-      backdrop-filter: blur(6px);
-      text-align: right; max-width: 320px;
-      opacity: 0; transition: opacity 0.6s ease;
+    /* ---- REPO ROBOT GUIDE (flush into the bottom-left corner) ---- */
+    #repo-guide {
+      position: fixed; bottom: 0; left: 0;
+      z-index: 18;
+      display: flex; align-items: flex-end; gap: 0;
       pointer-events: none;
     }
-    #tips-display.active { opacity: 1; }
+    #repo-canvas {
+      width: 160px; height: 200px;
+      filter: drop-shadow(0 4px 14px rgba(0,0,0,0.45));
+      transition: transform 0.2s ease;
+      background: radial-gradient(circle at 50% 75%, rgba(0,200,255,0.18), rgba(0,0,0,0) 65%);
+    }
+    #repo-canvas.talking { animation: repoTalk 0.14s ease-in-out infinite alternate; }
+    @keyframes repoTalk {
+      0%   { transform: translateY(0)    scale(1)    rotate(-2deg); }
+      100% { transform: translateY(-4px) scale(1.09) rotate(3deg); }
+    }
+    #tips-display {
+      position: relative;
+      padding: 12px 16px 12px 16px;
+      font-family: var(--font-body); font-size: 0.85rem; font-weight: 600;
+      color: rgba(255,255,255,0.95);
+      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+      background: rgba(0,20,40,0.8);
+      border: 1px solid rgba(0,200,255,0.35);
+      border-radius: 14px;
+      backdrop-filter: blur(6px);
+      text-align: left; max-width: 300px; min-width: 180px;
+      margin: 0 0 60px -8px; /* bubble aligned with the robot's head */
+      opacity: 0; transform: translateY(6px) scale(0.97);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      pointer-events: none;
+    }
+    /* Bubble tail pointing left — hugs the robot's mouth */
+    #tips-display::before {
+      content: ''; position: absolute;
+      left: -9px; bottom: 16px;
+      width: 0; height: 0;
+      border-top: 8px solid transparent;
+      border-bottom: 8px solid transparent;
+      border-right: 11px solid rgba(0,20,40,0.8);
+      filter: drop-shadow(-1px 0 0 rgba(0,200,255,0.35));
+    }
+    /* Blinking caret at the end of the typewriter reveal */
+    #tips-display .tip-caret {
+      display: inline-block; width: 0.5ch; margin-left: 1px;
+      color: rgba(0,200,255,0.9);
+      animation: tipCaret 0.7s steps(2, start) infinite;
+    }
+    @keyframes tipCaret { to { opacity: 0; } }
+    #tips-display.active { opacity: 1; transform: translateY(0) scale(1); }
     #tips-display .tip-icon { font-size: 1.3rem; margin-right: 8px; }
     #tips-display .tip-key {
       display: inline-block; padding: 1px 6px;
@@ -1365,7 +1402,7 @@
       <div class="start-info-card">
         <div class="start-info-icon">&#127918;</div>
         <div class="start-info-title" data-i18n="ctrl_title">Contr&ocirc;les</div>
-        <div class="start-info-body" data-i18n="ctrl_body"><b>ZQSD</b> naviguer &middot; <b>Espace</b> boost &middot; <b>Maj</b> boule de feu (d&egrave;s 50 plastiques)</div>
+        <div class="start-info-body" data-i18n="ctrl_body"><b>ZQSD</b> naviguer &middot; <b>Espace</b> boost &middot; <b>Shift</b> boule de feu (d&egrave;s 50 plastiques)</div>
       </div>
       <div class="start-info-card">
         <div class="start-info-icon">&#128161;</div>
@@ -1466,7 +1503,7 @@
   <!-- Fireball unlock full-screen flash + banner (fires once). -->
   <div id="fireball-unlock-banner" hidden>
     <div class="fb-unlock-title">&#128293; BOULE DE FEU D&Eacute;BLOQU&Eacute;E !</div>
-    <div class="fb-unlock-sub">Appuie sur <b>MAJ</b> pour tirer sur les pirates</div>
+    <div class="fb-unlock-sub">Appuie sur <b>SHIFT</b> pour tirer sur les pirates</div>
   </div>
   <div id="fireball-unlock-flash" hidden></div>
 
@@ -1487,11 +1524,15 @@
   </div>
 
   <!-- Controls hint -->
-  <div id="controls-hint" class="glass-panel">ZQSD Naviguer &middot; Espace Boost &middot; Maj Boule de feu &middot; &Eacute;vitez Baleine &amp; Hydronaute !</div>
+  <div id="controls-hint" class="glass-panel">ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; &Eacute;vitez Baleine &amp; Hydronaute !</div>
 
   <!-- Combo display -->
   <div id="combo-display" class="glass-panel"></div>
-  <div id="tips-display"></div>
+  <!-- REPO robot guide: 3D robot avatar + speech bubble, bottom-left -->
+  <div id="repo-guide">
+    <canvas id="repo-canvas"></canvas>
+    <div id="tips-display"></div>
+  </div>
 
   <!-- Hit vignette -->
   <div id="hit-vignette"></div>
@@ -1778,6 +1819,8 @@ let gameOver = false;
 let pirateFirstSpawned = false;
 let extraPirateWave1 = false;
 let extraPirateWave2 = false;
+let _wave2StartTime  = 0; // performance.now()/1000 when wave 2 triggered
+let _endgameTakeover = false; // when true, updateThemeMusic stops touching volumes
 let fireballUnlockShown = false; // show unlock banner once
 let countdownActive = true;
 let countdownTimer = 4.0;         // 4-second countdown (3→2→1→0/GO)
@@ -2091,6 +2134,167 @@ sfxUrls.countdownGo = buildWav((t, d) => {
   return (Math.sin(2 * Math.PI * 880 * t) + Math.sin(2 * Math.PI * 1320 * t) * 0.5) * env * 0.4;
 }, 0.35);
 
+// -------- MODULE-SPECIFIC INSTALL SFX ---------------------------------
+// Each module type plays a distinct clamp/install sound when it's
+// added to the boat. Procedurally generated, all short (0.5 s).
+
+// SPEED: heavy mechanical clank — anvil-like iron-on-iron hit + motor
+// revup tail. "Bolted on" feel.
+sfxUrls.moduleSpeed = buildWav((t, d) => {
+  // Sharp metal clank (white noise + low pitched thump) at t=0
+  const clankEnv = Math.exp(-t * 22);
+  const metal = (Math.sin(t * 8000) + Math.sin(t * 4730) * 0.7 + Math.cos(t * 11200) * 0.5) / 2.2;
+  const thump = Math.sin(2 * Math.PI * 85 * t) * Math.exp(-t * 14);
+  const clank = (metal * 0.5 + thump * 0.6) * clankEnv;
+  // Motor revup tail from 0.08s — rising pitch, fades out
+  let rev = 0;
+  if (t > 0.08) {
+    const lt = t - 0.08;
+    const freq = 110 + lt * 240;           // rising pitch
+    const revEnv = Math.sin(Math.PI * lt / 0.42);
+    rev = Math.sin(2 * Math.PI * freq * t) * Math.max(0, revEnv) * 0.45;
+  }
+  return (clank + rev) * 0.7;
+}, 0.55);
+
+// MAGNET: electric/electromagnetic hum swell — magnetic buzz + pitched
+// ferrous resonance. "Coil powered up" feel.
+sfxUrls.moduleMagnet = buildWav((t, d) => {
+  // Initial small clamp click
+  const click = Math.sin(2 * Math.PI * 680 * t) * Math.exp(-t * 60) * 0.5;
+  // Rising hum — 60 Hz AC mains flavor with a chirp up to the target pitch
+  const chirpFreq = 60 + Math.min(1, t / 0.25) * 120;   // 60 → 180 Hz
+  const hum = Math.sin(2 * Math.PI * chirpFreq * t) * 0.35;
+  // Harmonic buzz on top — "coil energized"
+  const buzz = (Math.sin(2 * Math.PI * chirpFreq * 3.1 * t)
+              + Math.sin(2 * Math.PI * chirpFreq * 5.2 * t) * 0.6) / 2.5;
+  // Envelope: quick rise, sustain, smooth tail
+  const env = Math.min(1, t * 8) * Math.min(1, (d - t) * 3);
+  return (click + hum * env + buzz * env * 0.4) * 0.55;
+}, 0.55);
+
+// SOLAR: bright crystalline shimmer — chime-like glissando + airy noise.
+// "Panels catching sunlight" feel.
+sfxUrls.moduleSolar = buildWav((t, d) => {
+  // Install click
+  const click = Math.sin(2 * Math.PI * 1800 * t) * Math.exp(-t * 70) * 0.35;
+  // Rising chime arpeggio — C-E-G-C in ~0.45s
+  const notes = [523, 659, 784, 1047];
+  const noteLen = 0.11;
+  const idx = Math.min(notes.length - 1, Math.floor(t / noteLen));
+  const noteT = t - idx * noteLen;
+  const f = notes[idx];
+  const chime = (Math.sin(2 * Math.PI * f * t)
+               + Math.sin(2 * Math.PI * f * 2 * t) * 0.35
+               + Math.sin(2 * Math.PI * f * 3 * t) * 0.12) / 1.5;
+  const chimeEnv = Math.max(0, 1 - noteT / 0.18) * Math.min(1, noteT / 0.008);
+  // Airy high-frequency sparkle throughout
+  const sparkle = (Math.sin(t * 17000) * Math.cos(t * 9400)) * 0.12 * Math.max(0, 1 - t / d);
+  return (click + chime * chimeEnv * 0.55 + sparkle) * 0.45;
+}, 0.50);
+
+// -------- UI HOVER TICK -----------------------------------------------
+sfxUrls.uiHover = buildWav((t, d) => {
+  const env = Math.max(0, 1 - t / d) * Math.min(1, t / 0.003);
+  return Math.sin(2 * Math.PI * 1800 * t) * env * 0.25;
+}, 0.08);
+
+// -------- DANGER STINGER + SUSPENSE PULSE ------------------------------
+// Single stinger hit when a fresh danger enters the zone (whale/pirate
+// gets close, fireball incoming, etc). Short — loop handler plays
+// suspenseLoop on top for continuing tension.
+sfxUrls.dangerStinger = buildWav((t, d) => {
+  // Dark sub-bass swell with descending dissonance
+  const sub  = Math.sin(2 * Math.PI * (55 - t * 20) * t) * 0.6;
+  const low  = Math.sin(2 * Math.PI * (110 - t * 30) * t) * 0.4;
+  // Metallic rattle on top for urgency
+  const rattle = (Math.sin(t * 3700) * Math.cos(t * 1900)) * Math.exp(-t * 4) * 0.2;
+  // Envelope: quick attack, 0.3s sustain, ~0.3s tail
+  const env = Math.min(1, t * 20) * Math.max(0, 1 - Math.max(0, t - 0.25) / 0.35);
+  return (sub + low + rattle) * env * 0.9;
+}, 0.65);
+
+// -------- WHALE CALL — low mournful song, ~1.4s ------------------------
+// Two-tone cetacean cry: a descending primary tone from ~380→220 Hz
+// with a gentle vibrato, a sub-octave underneath for body, and air-
+// bubbled noise for the "wet voice" texture. Sub-bass rumbles
+// throughout. Suitable for spatial playback (panned + distance).
+sfxUrls.whaleCall = buildWav((t, d) => {
+  // Primary cry: swept pitch with vibrato
+  const baseFreq = 380 - t * 110;                     // 380 → 270 Hz across 1s
+  const vibrato  = Math.sin(2 * Math.PI * 4.5 * t) * 8;
+  const primary  = Math.sin(2 * Math.PI * (baseFreq + vibrato) * t);
+  // Sub-octave for body
+  const sub      = Math.sin(2 * Math.PI * (baseFreq * 0.5 + vibrato * 0.5) * t);
+  // Wet noise texture — air through water
+  const noise    = (Math.sin(t * 2300) * Math.cos(t * 1710)
+                   + Math.sin(t * 3910) * 0.5) / 2.2;
+  // Low rumble bed
+  const rumble   = Math.sin(2 * Math.PI * 55 * t) * 0.45;
+  // Amplitude envelope — gentle swell/fall, like breathing
+  const env = Math.sin(Math.PI * t / d) * Math.min(1, t / 0.08);
+  return (primary * 0.38 + sub * 0.32 + noise * 0.12 + rumble * 0.25) * env * 0.7;
+}, 1.4);
+
+// -------- HEAVY SPLASH — big-body water impact ~0.55s -------------------
+// White-noise + filtered crash + descending pitched slap, then a wet
+// tail of droplets. Used for the whale breaching, big crashes, etc.
+sfxUrls.heavySplash = buildWav((t, d) => {
+  // Initial slap: filtered noise burst with strong low content
+  const slap = (Math.sin(t * 3900) * Math.cos(t * 2200)
+              + Math.sin(t * 6700) * 0.6
+              + Math.sin(t * 1400) * 0.9) / 3.0;
+  const slapEnv = Math.exp(-t * 8);
+  // Low "whump" — body mass hitting water
+  const whump = Math.sin(2 * Math.PI * (75 - t * 30) * t) * Math.exp(-t * 4) * 0.8;
+  // Droplet spray tail — high-frequency noise decaying over 0.4s
+  const drops = (Math.sin(t * 9800) * Math.cos(t * 4600)) * Math.exp(-(t - 0.1) * 4) * 0.35;
+  return (slap * slapEnv * 0.7 + whump + drops) * 0.65;
+}, 0.55);
+
+// -------- RAM IMPACT — hard metal-on-metal collision ~0.4s --------------
+// Use for boat-to-boat collisions, hydronaute hits, etc. More impactful
+// than the subtle `crash` SFX — has a low thud + bright metal ring.
+sfxUrls.ramImpact = buildWav((t, d) => {
+  // Sharp metallic crash
+  const metal = (Math.sin(t * 5900) * Math.cos(t * 3700)
+               + Math.sin(t * 8800) * 0.7
+               + Math.sin(t * 2200) * 0.5) / 2.7;
+  const metalEnv = Math.exp(-t * 14);
+  // Low thud — hull flexing / wood creak
+  const thud = (Math.sin(2 * Math.PI * 95 * t) * 0.8
+              + Math.sin(2 * Math.PI * 62 * t) * 0.6) * Math.exp(-t * 7);
+  // Metal ring tail — harmonic that sustains briefly
+  const ring = Math.sin(2 * Math.PI * 620 * t) * Math.exp(-t * 5) * 0.3;
+  return (metal * metalEnv + thud + ring) * 0.65;
+}, 0.4);
+
+// -------- WATER SPLASH SMALL — player hitting water ~0.25s --------------
+// For wake splashes, small crashes, boat bumping. Bright + short.
+sfxUrls.waterSplash = buildWav((t, d) => {
+  const burst = (Math.sin(t * 4500) * Math.cos(t * 2800)
+               + Math.sin(t * 7200) * 0.6) / 2.2;
+  const burstEnv = Math.exp(-t * 12);
+  const drops = (Math.sin(t * 11000) * Math.cos(t * 5100)) * Math.exp(-t * 6) * 0.25;
+  return (burst * burstEnv * 0.7 + drops) * 0.55;
+}, 0.28);
+
+// Short 1.2s loopable suspense pulse — soft ominous drone that plays
+// underneath regular SFX while danger is active. Designed to loop
+// cleanly (starts + ends at zero-crossing with matching phase).
+sfxUrls.suspenseLoop = buildWav((t, d) => {
+  // Slow breathing low drone — two detuned sines that beat
+  const a = Math.sin(2 * Math.PI * 58 * t) * 0.5;
+  const b = Math.sin(2 * Math.PI * 58.6 * t) * 0.5;
+  // Mid layer — higher tension, slow amplitude mod
+  const mid = Math.sin(2 * Math.PI * 175 * t) * (0.5 + 0.5 * Math.sin(2 * Math.PI * 0.83 * t)) * 0.22;
+  // Breathing overall envelope so the loop has a natural swell/fall
+  const breathe = 0.55 + 0.45 * Math.sin(2 * Math.PI * 0.83 * t);
+  // Tail-feather the boundaries so the loop is seamless
+  const seam = Math.min(1, t / 0.1) * Math.min(1, (d - t) / 0.1);
+  return (a + b + mid) * breathe * seam * 0.35;
+}, 1.2);
+
 // Victory fanfare: triumphant ascending arpeggio
 sfxUrls.victory = buildWav((t, d) => {
   const env = Math.max(0, 1 - t / d) * Math.min(1, t / 0.005);
@@ -2160,6 +2364,191 @@ function startOceanAmbient() {
 }
 function stopOceanAmbient() {
   if (oceanAmbient) { oceanAmbient.pause(); oceanAmbient = null; }
+}
+
+// -------- SUSPENSE DRONE — plays when a danger is near player -----------
+// Crossfades in when threat-proximity intensity is high, fades out when
+// the player is clear. Sits under the music at low volume, so it reads
+// as *tension building* rather than a competing track.
+let _suspenseLoop = null;
+let _suspenseTargetVol = 0;
+let _dangerActive = false;
+let _lastStingerTime = -999;
+let _nextWhaleCallAt = 0;
+const SUSPENSE_MAX_VOL = 0.32;
+function _ensureSuspenseLoop() {
+  if (_suspenseLoop) return;
+  try {
+    _suspenseLoop = new Audio(sfxUrls.suspenseLoop);
+    _suspenseLoop.loop = true;
+    _suspenseLoop.volume = 0;
+    _suspenseLoop.play().catch(() => {
+      // Autoplay-blocked — retry on next user input (will already have
+      // happened by the time a danger shows up in gameplay).
+      const retry = () => {
+        if (_suspenseLoop) _suspenseLoop.play().catch(() => {});
+        document.removeEventListener('pointerdown', retry);
+        document.removeEventListener('keydown', retry);
+      };
+      document.addEventListener('pointerdown', retry, { once: true });
+      document.addEventListener('keydown', retry, { once: true });
+    });
+  } catch (e) {}
+}
+// Called every frame with a 0..1 intensity value. 0 = silent, 1 = full.
+// The loop element is created on first need; volume eases toward target.
+function updateSuspense(intensity) {
+  if (intensity > 0.01) _ensureSuspenseLoop();
+  _suspenseTargetVol = Math.max(0, Math.min(1, intensity)) * SUSPENSE_MAX_VOL;
+  if (_suspenseLoop) {
+    try {
+      const cur = _suspenseLoop.volume;
+      // Eased lerp — fade-in over ~0.5s, fade-out over ~1s
+      const rate = _suspenseTargetVol > cur ? 0.08 : 0.04;
+      _suspenseLoop.volume = cur + (_suspenseTargetVol - cur) * rate;
+    } catch (e) {}
+  }
+}
+
+// ============================================================
+// IN-GAME MUSIC — two looping tracks that crossfade based on pirate
+// proximity. Main theme "Hydronaute Baleines" plays by default. When
+// a pirate is within range, main fades down and the pirate theme
+// "Deck Below the Plank" fades up. Both tracks play simultaneously
+// at different volumes so the crossfade is seamless.
+// ============================================================
+let themeIngameAudio  = null;   // main theme
+let themePirateAudio  = null;   // pirate theme
+let themeEndgameAudio = null;   // recap / Hydronaute theme, layered on top at game over
+let _themeStarted     = false;
+const MUSIC_MAX_VOL  = 0.45;           // ceiling — leaves room for SFX
+// Pirate-proximity thresholds (distance in world units from player):
+//   closer than PIRATE_MUSIC_NEAR → 100% pirate theme
+//   beyond PIRATE_MUSIC_FAR       → 100% main theme
+//   in between → smooth equal-power crossfade
+const PIRATE_MUSIC_NEAR = 35;
+const PIRATE_MUSIC_FAR  = 75;
+// During the climactic tail of the pirate track, widen the detection
+// range so the theme swells even when pirates are farther away.
+const PIRATE_MUSIC_CLIMAX_SECONDS = 60;       // last N seconds = climax
+const PIRATE_MUSIC_NEAR_CLIMAX    = 55;       // wider "full volume" zone
+const PIRATE_MUSIC_FAR_CLIMAX     = 120;      // wider trigger radius
+
+function startThemeMusic() {
+  if (_themeStarted) return;
+  _themeStarted = true;
+  // Main theme
+  try {
+    themeIngameAudio = new Audio('./public/assets/music/theme-ingame.mp3');
+    themeIngameAudio.loop = true;
+    themeIngameAudio.volume = 0;
+    const p = themeIngameAudio.play();
+    if (p && p.catch) p.catch(() => {
+      const retry = () => {
+        if (themeIngameAudio) themeIngameAudio.play().catch(() => {});
+        if (themePirateAudio) themePirateAudio.play().catch(() => {});
+        document.removeEventListener('pointerdown', retry);
+        document.removeEventListener('keydown', retry);
+      };
+      document.addEventListener('pointerdown', retry, { once: true });
+      document.addEventListener('keydown', retry, { once: true });
+    });
+  } catch (e) { /* noop */ }
+  // Pirate theme — plays silently in parallel and is mixed up via the
+  // proximity crossfade whenever a pirate is close. Loops so it keeps
+  // playing as long as pirates are around.
+  try {
+    themePirateAudio = new Audio('./public/assets/music/theme-pirate.mp3');
+    themePirateAudio.loop = true;
+    themePirateAudio.volume = 0;
+    themePirateAudio.play().catch(() => {});
+  } catch (e) { /* noop */ }
+  // Fade in the main theme over 1s at scene transition.
+  const t0 = performance.now();
+  const FADE_MS = 1000;
+  const tick = () => {
+    if (!themeIngameAudio) return;
+    const dt = performance.now() - t0;
+    const k  = Math.min(1, dt / FADE_MS);
+    try { themeIngameAudio.volume = k * MUSIC_MAX_VOL; } catch (e) {}
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+// Closest active pirate distance from the player — used to drive the
+// main↔pirate crossfade. Returns Infinity when no pirate is emerged.
+function _closestPirateDist() {
+  let best = Infinity;
+  for (const p of pirates) {
+    if (!p.emerged) continue;
+    const d = Math.hypot(p.x - localPlayer.x, p.z - localPlayer.z);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// Music volume with dynamic ducking + pirate crossfade. When a pirate
+// comes within PIRATE_MUSIC_FAR units, the main theme fades down and
+// the pirate theme fades up (equal-power crossfade). Both tracks duck
+// together on impact events.
+function updateThemeMusic(_unused, muted) {
+  if (!_themeStarted || !themeIngameAudio) return;
+  // Once the endgame takeover starts, its own ramp owns every track's
+  // volume — don't let the proximity mixer fight it.
+  if (_endgameTakeover) return;
+  try {
+    if (muted) {
+      if (themeIngameAudio) themeIngameAudio.volume = 0;
+      if (themePirateAudio) themePirateAudio.volume = 0;
+      return;
+    }
+    const now = performance.now() / 1000;
+    // Ducking multiplier — applies equally to both tracks so the duck
+    // doesn't break the crossfade balance.
+    let duckMul = 1;
+    if (now < _musicDuckUntil) duckMul = _musicDuckAmount;
+    else if (_musicDuckAmount !== 1) _musicDuckAmount = 1;
+    // Pirate-proximity intensity 0..1.
+    // The NEAR/FAR range smoothly widens during the final
+    // PIRATE_MUSIC_CLIMAX_SECONDS of the pirate track so the theme
+    // "grows" on approach to the climax.
+    let nearR = PIRATE_MUSIC_NEAR;
+    let farR  = PIRATE_MUSIC_FAR;
+    if (themePirateAudio && isFinite(themePirateAudio.duration)) {
+      const remaining = themePirateAudio.duration - themePirateAudio.currentTime;
+      if (remaining <= PIRATE_MUSIC_CLIMAX_SECONDS) {
+        // 0 at start of climax window → 1 at track end
+        const k = 1 - Math.max(0, remaining) / PIRATE_MUSIC_CLIMAX_SECONDS;
+        nearR = PIRATE_MUSIC_NEAR + (PIRATE_MUSIC_NEAR_CLIMAX - PIRATE_MUSIC_NEAR) * k;
+        farR  = PIRATE_MUSIC_FAR  + (PIRATE_MUSIC_FAR_CLIMAX  - PIRATE_MUSIC_FAR)  * k;
+      }
+    }
+    const dist = _closestPirateDist();
+    let pirateIntensity;
+    if (dist <= nearR)      pirateIntensity = 1;
+    else if (dist >= farR)  pirateIntensity = 0;
+    else pirateIntensity = 1 - (dist - nearR) / (farR - nearR);
+    // Final 3-ship wave: gradually fade the pirate theme up to full
+    // regardless of distance — the track must ride out to the climax.
+    // Smooth ease-in (smoothstep) over PIRATE_FINAL_RAMP_S seconds.
+    if (extraPirateWave2 && _wave2StartTime > 0) {
+      const PIRATE_FINAL_RAMP_S = 12;
+      const x = Math.min(1, Math.max(0, (now - _wave2StartTime) / PIRATE_FINAL_RAMP_S));
+      const t = x * x * (3 - 2 * x); // smoothstep
+      pirateIntensity = pirateIntensity + (1 - pirateIntensity) * t;
+    }
+    // Equal-power crossfade: sqrt keeps total loudness roughly constant.
+    const mainTarget   = Math.sqrt(1 - pirateIntensity) * MUSIC_MAX_VOL * duckMul;
+    const pirateTarget = Math.sqrt(pirateIntensity)     * MUSIC_MAX_VOL * duckMul;
+    // Ease toward targets — musical fade-in/out, not instant.
+    const curMain = themeIngameAudio.volume;
+    themeIngameAudio.volume = curMain + (mainTarget - curMain) * 0.08;
+    if (themePirateAudio) {
+      const curPir = themePirateAudio.volume;
+      themePirateAudio.volume = curPir + (pirateTarget - curPir) * 0.08;
+    }
+  } catch (e) { /* noop */ }
 }
 
 // ---- MOTOR ENGINE LOOP ----
@@ -2403,6 +2792,52 @@ function updateMotorLoop(dt, engineRunning, accelerating, boosting) {
   } catch (e) { /* some browsers throttle playbackRate changes */ }
 }
 
+// ============================================================
+// SOUND-DESIGN UPGRADE — Web Audio routing
+// ============================================================
+// Shared AudioContext, lazily created on first playSfx call so we
+// don't break the HTML-Audio pipeline already used by the motor loop
+// + music. SFX played through this graph get:
+//   * Stereo panning based on world-X-relative-to-player
+//   * Distance attenuation (volume falloff with distance)
+//   * Low-pass filter opens up as you get closer (muffled at range)
+//   * Route into a master compressor bus for glued-together mix
+// HTML-Audio elements (music, motor loop) stay on their own path and
+// are merged at the destination.
+let _audioCtx = null;
+let _audioBus = null;         // master GainNode (compressor input)
+let _audioCompressor = null;  // prevents peaks when many SFX stack
+function _ensureAudioCtx() {
+  if (_audioCtx) return _audioCtx;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    _audioCtx = new AC();
+    _audioCompressor = _audioCtx.createDynamicsCompressor();
+    _audioCompressor.threshold.value = -14;
+    _audioCompressor.knee.value      = 18;
+    _audioCompressor.ratio.value     = 4;
+    _audioCompressor.attack.value    = 0.003;
+    _audioCompressor.release.value   = 0.25;
+    _audioBus = _audioCtx.createGain();
+    _audioBus.gain.value = 1.0;
+    _audioBus.connect(_audioCompressor);
+    _audioCompressor.connect(_audioCtx.destination);
+    // If the context starts suspended (browser autoplay policy), resume
+    // on first user gesture.
+    if (_audioCtx.state === 'suspended') {
+      const resume = () => {
+        _audioCtx.resume().catch(() => {});
+        document.removeEventListener('pointerdown', resume);
+        document.removeEventListener('keydown', resume);
+      };
+      document.addEventListener('pointerdown', resume, { once: true });
+      document.addEventListener('keydown', resume, { once: true });
+    }
+  } catch (e) {}
+  return _audioCtx;
+}
+
+// Simple (non-spatial) SFX — player-centred UI + self events.
 function playSfx(url, vol = 0.7) {
   try {
     const a = new Audio(url);
@@ -2411,24 +2846,148 @@ function playSfx(url, vol = 0.7) {
   } catch (e) {}
 }
 
+// Spatial SFX — pans stereo based on X relative to camera, attenuates
+// volume + applies a low-pass filter rolloff with distance. Uses
+// Web Audio through the shared bus/compressor.
+function playSfxSpatial(url, vol, worldX, worldZ) {
+  if (!_audioCtx) _ensureAudioCtx();
+  if (!_audioCtx) { playSfx(url, vol); return; }  // fallback if Web Audio failed
+  try {
+    const audioEl = new Audio(url);
+    audioEl.crossOrigin = 'anonymous';
+    const src = _audioCtx.createMediaElementSource(audioEl);
+    // Panner: left/right based on horizontal offset from player.
+    // atan2(dx, dz) relative to the camera's yaw would be more accurate
+    // but for a top-down arcade feel, raw world X vs player X is fine.
+    const dxp = worldX - localPlayer.x;
+    const dzp = worldZ - localPlayer.z;
+    const dist = Math.sqrt(dxp * dxp + dzp * dzp);
+    // Pan: left at dxp=-20, right at dxp=+20, clamped -1..1.
+    // Could hook yaw for true head-tracking but the game's top-down
+    // perspective makes X-based panning read correctly.
+    const pan = Math.max(-1, Math.min(1, dxp / 20));
+    const panner = _audioCtx.createStereoPanner();
+    panner.pan.value = pan;
+    // Volume attenuation: 1.0 up to 15 units, falls off linearly to 0 at 80.
+    const volAtten = Math.max(0, 1 - Math.max(0, dist - 15) / 65);
+    // Filter rolloff: full-bandwidth up close, low-pass tightens with distance.
+    // Distant sounds sound "muffled" like real-world atmospheric absorption.
+    const filter = _audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 22050 - Math.min(16000, dist * 220);
+    filter.Q.value = 0.7;
+    const gain = _audioCtx.createGain();
+    gain.gain.value = vol * volAtten;
+    src.connect(filter);
+    filter.connect(panner);
+    panner.connect(gain);
+    gain.connect(_audioBus);
+    audioEl.play().catch(() => {});
+    // Auto-cleanup once the clip finishes
+    audioEl.addEventListener('ended', () => {
+      try { src.disconnect(); filter.disconnect(); panner.disconnect(); gain.disconnect(); } catch (e) {}
+    });
+  } catch (e) {
+    playSfx(url, vol);  // fallback
+  }
+}
+
+// -- Music ducking — briefly drops in-game music volume on impact.
+// Ensures crashes, fireball hits, and death punch through the mix.
+let _musicDuckUntil = 0;
+let _musicDuckAmount = 1;
+function duckMusic(seconds = 0.25, amount = 0.35) {
+  const now = performance.now() / 1000;
+  // Take the deepest duck + furthest end so stacked impacts compound.
+  _musicDuckUntil  = Math.max(_musicDuckUntil,  now + seconds);
+  _musicDuckAmount = Math.min(_musicDuckAmount, amount);
+}
+
 const sfx = {
-  pickup()     { playSfx(sfxUrls.pickup, 0.6); },
+  // NON-SPATIAL (player-centred UI / self events) — 2D stereo, no distance
+  pickup(combo) {
+    // Combo pitch-up: each consecutive pickup plays slightly higher,
+    // capped at ~1.5× pitch. Feels like a xylophone climb — rewards
+    // streaks without needing separate assets.
+    try {
+      const a = new Audio(sfxUrls.pickup);
+      const n = Math.max(1, combo || 1);
+      a.playbackRate = Math.min(1.6, 1 + (n - 1) * 0.08);
+      a.volume = 0.6;
+      a.play().catch(() => {});
+    } catch (e) {}
+  },
   heal()       { playSfx(sfxUrls.heal, 0.6); },
   boost()      { playSfx(sfxUrls.boost, 0.7); },
-  crash()      { playSfx(sfxUrls.crash, 0.15); },
-  bomb()       { playSfx(sfxUrls.bomb, 0.5); },
-  death()      { playSfx(sfxUrls.death, 0.6); },
+  death()      { playSfx(sfxUrls.death, 0.6); duckMusic(0.6, 0.20); },
   upgrade()    { playSfx(sfxUrls.upgrade, 0.7); },
-  levelUp()    { playSfx(sfxUrls.levelUp, 0.6); },
-  bombLaunch() { playSfx(sfxUrls.bombLaunch, 0.3); },
+  levelUp()    { playSfx(sfxUrls.levelUp, 0.6); duckMusic(0.4, 0.45); },
   heartbeat()  { playSfx(sfxUrls.heartbeat, 0.8); },
   gameOver()   { playSfx(sfxUrls.gameOver, 0.7); },
   countdownBeep() { playSfx(sfxUrls.countdownBeep, 0.7); },
-  thunder()    { playSfx(sfxUrls.thunder, 0.5); },
+  countdownGo()   { playSfx(sfxUrls.countdownGo, 0.8); duckMusic(0.5, 0.45); },
+  victory()       { playSfx(sfxUrls.victory, 0.9); duckMusic(0.8, 0.30); },
   motorStart() { playSfx(sfxUrls.motorStart, 1.0); },
   motorDie()   { playSfx(sfxUrls.motorDie, 0.9); },
-  countdownGo()   { playSfx(sfxUrls.countdownGo, 0.8); },
-  victory()       { playSfx(sfxUrls.victory, 0.9); },
+  thunder()    { playSfx(sfxUrls.thunder, 0.5); duckMusic(1.2, 0.55); },
+
+  // SPATIAL — world events with position. Panned + distance-attenuated
+  // + slight music duck on impacts to punch through.
+  crash(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.crash, 0.18, x, z);
+    else playSfx(sfxUrls.crash, 0.15);
+    duckMusic(0.18, 0.55);
+  },
+  bomb(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.bomb, 0.55, x, z);
+    else playSfx(sfxUrls.bomb, 0.5);
+    duckMusic(0.3, 0.40);
+  },
+  bombLaunch(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.bombLaunch, 0.35, x, z);
+    else playSfx(sfxUrls.bombLaunch, 0.3);
+  },
+
+  // Module install SFX — one per type, each has its own character.
+  moduleSpeed()  { playSfx(sfxUrls.moduleSpeed,  0.75); duckMusic(0.25, 0.55); },
+  moduleMagnet() { playSfx(sfxUrls.moduleMagnet, 0.65); duckMusic(0.25, 0.55); },
+  moduleSolar()  { playSfx(sfxUrls.moduleSolar,  0.55); duckMusic(0.25, 0.55); },
+  // Convenience dispatcher — called from applyUpgradeVisuals when a
+  // new module is actually built, picks the right install SFX by type.
+  moduleInstall(type) {
+    if (type === 'speed')       sfx.moduleSpeed();
+    else if (type === 'magnet') sfx.moduleMagnet();
+    else                        sfx.moduleSolar();   // solar_panel
+  },
+
+  // UI hover — very subtle high tick for menu/tutorial/upgrade cards.
+  uiHover() { playSfx(sfxUrls.uiHover, 0.25); },
+
+  // Danger stinger — one-shot when a threat enters the zone.
+  dangerStinger() { playSfx(sfxUrls.dangerStinger, 0.75); duckMusic(0.8, 0.45); },
+
+  // Whale call — low mournful song (spatial when position given)
+  whaleCall(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.whaleCall, 0.85, x, z);
+    else playSfx(sfxUrls.whaleCall, 0.7);
+  },
+  // Heavy splash — whale breaching / big crash impact
+  heavySplash(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.heavySplash, 0.85, x, z);
+    else playSfx(sfxUrls.heavySplash, 0.7);
+    duckMusic(0.35, 0.45);
+  },
+  // Small water splash — light hits, wake bumps
+  waterSplash(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.waterSplash, 0.5, x, z);
+    else playSfx(sfxUrls.waterSplash, 0.4);
+  },
+  // Ram impact — beefier than `crash`, for big ship-to-ship contact
+  ramImpact(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.ramImpact, 0.85, x, z);
+    else playSfx(sfxUrls.ramImpact, 0.7);
+    duckMusic(0.25, 0.40);
+  },
 };
 
 // ============================================================
@@ -2732,11 +3291,14 @@ function applyBumperBounce(a, b, hit, immovableB) {
 
 // ---- OBB (Oriented Bounding Box) collision system ----
 function boatOBB(p, level) {
-  // Whale: much larger hitbox, scales with WHALE_SCALE
+  // Whale: MASSIVE danger zone — the visible body + a pressure wake
+  // around it so you can't sneak past her at speed. Tripled from the
+  // old 2.25×4.5 halfW/halfL so players genuinely avoid approaching her
+  // rather than risk a graze.
   if (p && p.isWhale) {
     return {
       cx: p.x, cz: p.z,
-      halfW: 2.25, halfL: 4.5, // whale body (scaled to match WHALE_SCALE)
+      halfW: 6.5, halfL: 13.0,
       sin: Math.sin(p.rotation), cos: Math.cos(p.rotation),
     };
   }
@@ -2826,7 +3388,7 @@ function checkGarbageCollection(player, upgrades) {
       } else {
         spawnFloatingText(g.x, g.z, '+' + basePts, '#ffd93d');
       }
-      sfx.pickup();
+      sfx.pickup(comboCount);  // pitched up by combo count — reward streaks
       // Grab color before removing the mesh
       const gColor = getGarbageMeshColor(g.id);
       removeGarbageMesh(g.id);
@@ -3035,6 +3597,11 @@ function applyCollision(a, b, now) {
     victim.x += (pdx / pDist) * 5;
     victim.z += (pdz / pDist) * 5;
     events.push({ id: 'ce_' + (collisionIdCounter++), x: victim.x, z: victim.z, text: '-' + WHALE_CONTACT_DAMAGE + ' BALEINE!', color: '#4488cc', time: now, victimId: victim.id });
+    // Dramatic audio on whale contact: heavy splash + whale cry, both
+    // spatialised at the impact point. Combined with the music duck this
+    // should land like a proper "oh no, the whale ate me" moment.
+    try { sfx.heavySplash(victim.x, victim.z); } catch (e) {}
+    try { sfx.whaleCall(whale.x, whale.z); } catch (e) {}
     if (victim.id === 'local') triggerHitEffect();
     return events; // whale takes no damage
   }
@@ -3150,7 +3717,12 @@ function checkBoatCollisions(players, now) {
         const splX = (a.x + b.x) / 2, splZ = (a.z + b.z) / 2;
         spawnSplash(splX, splZ);
         const dC = (splX - localPlayer.x) ** 2 + (splZ - localPlayer.z) ** 2;
-        if (dC < 60 * 60) sfx.crash();
+        // Big boat-to-boat hit: spatial ram impact + a water splash.
+        // Two layers = feels way more physical than the old single "crash".
+        if (dC < 80 * 80) {
+          sfx.ramImpact(splX, splZ);
+          sfx.waterSplash(splX, splZ);
+        }
       }
     }
   }
@@ -3953,7 +4525,7 @@ function updatePirate(pirate, allPlayers, dt, now) {
       newBombs.push(bomb);
       addBombMesh(bomb);
       const dBL = (pirate.x - localPlayer.x) ** 2 + (pirate.z - localPlayer.z) ** 2;
-      if (dBL < 70 * 70) sfx.bombLaunch();
+      if (dBL < 70 * 70) sfx.bombLaunch(pirate.x, pirate.z);
     }
   }
 
@@ -4207,7 +4779,7 @@ function updateBombs(dt, now, allPlayers) {
       spawnBombExplosion(b.targetX, b.targetZ);
       addBombRipple(b.targetX, b.targetZ);
       const dBE = (b.targetX - localPlayer.x) ** 2 + (b.targetZ - localPlayer.z) ** 2;
-      if (dBE < 60 * 60) sfx.bomb();
+      if (dBE < 60 * 60) sfx.bomb(b.targetX, b.targetZ);
       if (mesh) { scene.remove(mesh); }
       bombMeshes.delete(b.id);
       bombs.splice(i, 1);
@@ -4264,7 +4836,7 @@ function botShootFireball(bot, chargeT) {
   fireballs.push(fb);
   addFireballMesh(fb);
   const dSfx = (bot.x - localPlayer.x) ** 2 + (bot.z - localPlayer.z) ** 2;
-  if (dSfx < 70 * 70) sfx.bombLaunch();
+  if (dSfx < 70 * 70) sfx.bombLaunch(bot.x, bot.z);
 }
 
 function tryShootFireball(chargeTime, alreadyPaid) {
@@ -4296,7 +4868,7 @@ function tryShootFireball(chargeTime, alreadyPaid) {
   };
   fireballs.push(fb);
   addFireballMesh(fb);
-  sfx.bombLaunch();
+  sfx.bombLaunch(bow.x, bow.z);
   _tutStats.hasFired = true;
   _tutStats.lastFireTime = gameTime;
 }
@@ -4434,7 +5006,7 @@ function updateFireballs(dt, now) {
       if (hit) {
         spawnFireballExplosion(fb.x, fb.z, fb.charge);
         const dFB = (fb.x - localPlayer.x) ** 2 + (fb.z - localPlayer.z) ** 2;
-        if (dFB < 60 * 60) sfx.bomb();
+        if (dFB < 60 * 60) sfx.bomb(fb.x, fb.z);
       }
       if (mesh) scene.remove(mesh);
       fireballMeshes.delete(fb.id);
@@ -4552,7 +5124,7 @@ function updateSeaMines(dt) {
         spawnSplash(m.x, m.z);
         addBombRipple(m.x, m.z);
         const dSfx = (m.x - localPlayer.x) ** 2 + (m.z - localPlayer.z) ** 2;
-        if (dSfx < 60 * 60) sfx.bomb();
+        if (dSfx < 60 * 60) sfx.bomb(m.x, m.z);
         if (mesh) scene.remove(mesh);
         seaMineMeshes.delete(m.id);
         seaMines.splice(i, 1);
@@ -5508,10 +6080,105 @@ setTimeout(() => {
   }, 800);
 }, INTRO_DURATION);
 
+// Music disabled for now — early-prime + global-unblock helpers
+// removed. Keep the functions themselves (startMenuMusic etc.) so
+// we can toggle this back on later.
+
+// Menu music ("Hydronaute au Gratin") — shanty intro that plays while
+// the player is on the start screen + tutorial. Fades out when they
+// click "LARGUER LES AMARRES" so the in-game adaptive music takes over.
+let _menuMusic = null;
+function startMenuMusic() {
+  if (_menuMusic) return;
+  try {
+    _menuMusic = new Audio('./public/assets/music/theme-menu.mp3');
+    _menuMusic.loop = true;
+    _menuMusic.volume = 0;
+
+    const TARGET = 0.55;
+    const FADE_MS = 1500;
+
+    // Fade-in tick — only starts AFTER playback has actually begun,
+    // so a silent 1.5s doesn't burn through while audio is still paused
+    // waiting for the user gesture.
+    const beginFadeIn = () => {
+      const t0 = performance.now();
+      const tick = () => {
+        if (!_menuMusic || _menuMusic.paused) return;
+        const dt = performance.now() - t0;
+        const k = Math.min(1, dt / FADE_MS);
+        try { _menuMusic.volume = k * TARGET; } catch (e) {}
+        if (k < 1) requestAnimationFrame(tick);
+      };
+      tick();
+    };
+
+    // Try to play immediately. If the browser blocks autoplay, install
+    // a one-shot listener on the next user interaction to retry.
+    const tryPlay = () => {
+      const p = _menuMusic && _menuMusic.play();
+      if (p && p.then) {
+        p.then(() => {
+          console.log('Menu music playing.');
+          beginFadeIn();
+        }).catch((err) => {
+          console.warn('Menu music autoplay blocked — will retry on first user interaction.', err);
+          const retry = () => {
+            document.removeEventListener('pointerdown', retry);
+            document.removeEventListener('keydown', retry);
+            tryPlay();   // tryPlay recurses once user gesture fires
+          };
+          document.addEventListener('pointerdown', retry);
+          document.addEventListener('keydown', retry);
+        });
+      } else {
+        // Older browsers — no promise, assume playback starts.
+        beginFadeIn();
+      }
+    };
+    tryPlay();
+  } catch (e) {
+    console.warn('Menu music init failed:', e);
+  }
+}
+function stopMenuMusic() {
+  if (!_menuMusic) return;
+  // Fade out over 0.6s then stop the element so the transition into
+  // the gameplay music feels like a proper handoff, not a hard cut.
+  const m = _menuMusic;
+  _menuMusic = null;
+  const t0 = performance.now();
+  const startVol = m.volume;
+  const FADE_MS = 600;
+  const tick = () => {
+    const dt = performance.now() - t0;
+    const k = Math.min(1, dt / FADE_MS);
+    try { m.volume = startVol * (1 - k); } catch (e) {}
+    if (k < 1) requestAnimationFrame(tick);
+    else { try { m.pause(); } catch (e) {} }
+  };
+  tick();
+}
+
 function showStartScreen() {
   document.getElementById('loading-screen').style.display = 'none';
   const ss = document.getElementById('start-screen');
   ss.style.display = 'flex';
+  // Menu shanty music is still disabled (user preference), but we DO
+  // start the ocean ambient so the menu feels like a breezy harbour
+  // rather than dead silence. Kept low so button clicks read clearly.
+  startOceanAmbient();
+  // Attach hover ticks to the main menu buttons + language toggle.
+  const hoverables = document.querySelectorAll('#start-btn, #tutorial-btn, .lang-btn, .upgrade-card');
+  hoverables.forEach(el => {
+    if (el.dataset.hoverBound) return;
+    el.dataset.hoverBound = '1';
+    el.addEventListener('mouseenter', () => { try { sfx.uiHover(); } catch (e) {} });
+    el.addEventListener('click', () => {
+      // Slightly richer confirmation click than the hover tick
+      try { const a = new Audio(sfxUrls.pickup); a.volume = 0.32; a.playbackRate = 1.4; a.play().catch(() => {}); } catch (e) {}
+    });
+  });
 }
 
 // -- Loading progress --
@@ -6864,9 +7531,9 @@ function spawnWhaleSpout(x, y, z) {
       maxLife: 2.8,
     });
   }
-  // Audio cue
-  if (typeof sfx !== 'undefined' && sfx.crash) {
-    try { sfx.crash(); } catch (e) {}
+  // Audio cue — boat jumping out of water (death) → heavy splash
+  if (typeof sfx !== 'undefined' && sfx.heavySplash) {
+    try { sfx.heavySplash(localPlayer.x, localPlayer.z); } catch (e) {}
   }
 }
 
@@ -7208,6 +7875,64 @@ function updateCombo(dt) {
 // them. Tracked in _tutStats below; hooks are sprinkled at action sites
 // (tryShootFireball, collect, etc.) to flip flags.
 const tipsEl = document.getElementById('tips-display');
+const repoCanvasEl = document.getElementById('repo-canvas');
+
+// ============================================================
+// DYNAMIC DIFFICULTY ADJUSTMENT (DDA)
+// ------------------------------------------------------------
+// The goal: everyone has fun. A skilled player stays challenged and
+// scores more; a struggling player gets a gentle world without feeling
+// coddled. We scale bot movement speed and pirate speed+bomb cadence
+// (pirate bomb timers run on dt, so scaling dt naturally slows them).
+// Recomputed once per second from observed performance.
+// ============================================================
+const _dda = { botSpeedMul: 1.0, pirateSpeedMul: 1.0, nextRecalc: 0 };
+function _recomputeDDA() {
+  // Average non-whale/non-hydro bot score
+  let sum = 0, n = 0;
+  for (const b of bots) {
+    if (!b || b.isWhale || b.isHydro) continue;
+    sum += (b.totalCollected || 0); n++;
+  }
+  const avgBot = n > 0 ? sum / n : 0;
+  const mine = localPlayer.totalCollected || 0;
+  // "Skill ratio" — how the player compares to the average bot.
+  // Early game (low scores) ratio is noisy, so blend toward 1.0 until
+  // ~20s in.
+  let ratio;
+  if (avgBot + mine < 5) ratio = 1.0;
+  else ratio = mine / Math.max(1, avgBot);
+  const warmup = Math.min(1, gameTime / 20);
+  ratio = 1.0 * (1 - warmup) + ratio * warmup;
+  // Also factor in hit-taking: many hits in the last 20s → ease up.
+  const recentHits = _tutStats.hitCount;
+  const hitEase = Math.min(0.18, recentHits * 0.04);
+
+  // Target multipliers. Struggling (ratio < 0.8): bots at 75–90%,
+  // pirates at 70–85%. Normal (0.8..1.2): ~100%. Ahead (>1.2): bots
+  // get a tiny boost (up to +10%) so the gap doesn't balloon, but
+  // pirates stay the same (they're the threat layer, not a rubberband).
+  let botMul, pirMul;
+  if (ratio < 0.8) {
+    const t = Math.max(0.4, ratio / 0.8); // 0.5..1
+    botMul = 0.75 + 0.15 * t;
+    pirMul = 0.70 + 0.15 * t;
+  } else if (ratio < 1.2) {
+    botMul = 1.0;
+    pirMul = 1.0;
+  } else {
+    const t = Math.min(1, (ratio - 1.2) / 0.8);
+    botMul = 1.0 + 0.10 * t;
+    pirMul = 1.0 + 0.05 * t;
+  }
+  botMul -= hitEase;
+  pirMul -= hitEase;
+  botMul = Math.max(0.6, Math.min(1.15, botMul));
+  pirMul = Math.max(0.55, Math.min(1.10, pirMul));
+  // Smooth toward new targets so difficulty never jolts.
+  _dda.botSpeedMul    += (botMul - _dda.botSpeedMul)    * 0.25;
+  _dda.pirateSpeedMul += (pirMul - _dda.pirateSpeedMul) * 0.25;
+}
 const _tutStats = {
   hasFired: false,
   hasBoosted: false,
@@ -7232,6 +7957,21 @@ function _nearestEntityDist2(getEntities) {
     if (d < best) best = d;
   }
   return best;
+}
+function _playerRank() {
+  // Quick rank compute: #1 = highest score
+  let rank = 1;
+  const me = localPlayer.totalCollected;
+  for (const b of bots) {
+    if (!b || b.isWhale || b.isHydro) continue;
+    if (b.totalCollected > me) rank++;
+  }
+  return rank;
+}
+function _totalRacers() {
+  let n = 1;
+  for (const b of bots) if (b && !b.isWhale && !b.isHydro) n++;
+  return n;
 }
 function _pinkPlasticNear() {
   for (let i = 0; i < garbage.length; i++) {
@@ -7283,108 +8023,194 @@ function _mineOrBombNear() {
 // Tips list — each fires ONCE when its cond() first returns true.
 // Ordered by discovery priority; first eligible, unseen tip wins each frame.
 const TIPS = [
-  {
-    id: 'move',
-    html: '<span class="tip-icon">🎮</span> <span class="tip-key">ZQSD</span> ou <span class="tip-key">Fl\u00E8ches</span> pour naviguer',
-    cond: () => !_playerMoving() && gameTime > 1.5, // show if they haven't moved yet
+  // Charismatic robot co-pilot. Dry, confident, theatrical.
+  // Opens with a proper intro, then rotates between sassy commentary
+  // and the occasional real marine-debris fact.
+  // Bi-polar co-pilot: flat deadpan one second, EXPLOSION DE JOIE pour
+  // lui-m\u00EAme la seconde d\u2019apr\u00E8s. Pas de nom, juste une pr\u00E9sence.
+  // prio: 10 = critical/game-ending, 7 = major event, 5 = situational,
+  // 3 = coaching, 1 = flavor/intro. Higher-prio tips preempt lower ones.
+  { id: 'intro-1', prio: 6,
+    html: 'Salut. Je suis ta conscience. Et ton co-pilote.',
+    cond: () => gameTime > 0.8,
   },
-  {
-    id: 'boost',
-    html: '<span class="tip-icon">⚡</span> Appuyez sur <span class="tip-key">ESPACE</span> pour activer le boost',
-    cond: () => _playerMoving() && !input.boost && gameTime > 4 && localPlayer.boostEnergy > 0.3,
+  { id: 'intro-2', prio: 6,
+    html: 'MEILLEUR CO-PILOTE DU MONDE d\u2019ailleurs !!! Bon. On y va.',
+    cond: () => gameTime > 7.5 && !!_seenTips['intro-1'],
   },
-  {
-    id: 'collect',
-    html: '<span class="tip-icon">♻️</span> Foncez sur le plastique flottant pour le collecter',
-    cond: () => localPlayer.totalCollected === 0 && gameTime > 6,
+  { id: 'intro-3', prio: 6,
+    html: 'La mission : un oc\u00E9an, des d\u00E9chets, un bateau solaire. Tu nettoies, l\u2019IA apprend.',
+    cond: () => gameTime > 13 && !!_seenTips['intro-2'],
   },
-  {
-    id: 'pink',
-    html: '<span class="tip-icon">💗</span> Le plastique <b style="color:#ff66aa">rose</b> restaure vos PV',
+  { id: 'move', prio: 2,
+    html: 'On attend quoi ? <span class="tip-key">ZQSD</span>. L\u2019oc\u00E9an se nettoie pas tout seul.',
+    cond: () => !_playerMoving() && gameTime > 18 && !!_seenTips['intro-3'],
+  },
+  { id: 'boost', prio: 2,
+    html: 'On BR\u00DBLE le plastique pour le turbo !!! <span class="tip-key">ESPACE</span> !!! J\u2019A-DO-RE !',
+    cond: () => _playerMoving() && !input.boost && gameTime > 20 && localPlayer.boostEnergy > 0.3,
+  },
+  { id: 'collect', prio: 2,
+    html: 'Une bouteille = <b>450 ans</b> de demi-vie. Fonce dessus.',
+    cond: () => localPlayer.totalCollected === 0 && gameTime > 22,
+  },
+  { id: 'pink', prio: 5,
+    html: 'Le <b style="color:#ff66aa">rose</b> te soigne. Prends. Ne discute pas.',
     cond: () => _pinkPlasticNear() && localPlayer.health < MAX_HEALTH * 0.85,
   },
-  {
-    id: 'combo',
-    html: '<span class="tip-icon">🔥</span> Enchainez pour un <b style="color:#ffd93d">combo</b> jusqu\u2019\u00E0 x5 !',
+  { id: 'combo', prio: 4,
+    html: '<b style="color:#ffd93d">COMBO</b>. Mouais. Pas mal.',
     cond: () => comboCount >= 2,
   },
-  {
-    id: 'hydro',
-    html: '<span class="tip-icon">🤖</span> <b style="color:#00ffcc">\u00C9VITEZ l\u2019Hydronaute</b> (bateau cyan) \u2014 la toucher fait mal !',
+  { id: 'combo-big', prio: 7,
+    html: 'COMBO x<b>5</b> !!! J\u2019AI CHOISI LE BON CAPITAINE !!! \uD83D\uDCAF',
+    cond: () => comboCount >= 5,
+  },
+  { id: 'hydro', prio: 5,
+    html: 'L\u2019<b style="color:#00ffcc">Hydronaute</b> travaille. Tu t\u2019\u00E9loignes.',
     cond: () => _hydronautVisible(),
   },
-  {
-    id: 'pirate',
-    html: '<span class="tip-icon">🏴‍☠️</span> Pirate en vue ! Il est <b>destructible</b> \u2014 <span class="tip-key">MAJ</span> pour tirer',
+  { id: 'pirate', prio: 7,
+    html: 'Pirate. Tu peux fuir, ou le descendre avec <span class="tip-key">SHIFT</span>. Je dis \u00E7a, je dis rien.',
     cond: () => _visiblePirate(),
   },
-  {
-    id: 'whale',
-    html: '<span class="tip-icon">🐋</span> <b style="color:#4488cc">Baleine</b> en surface \u2014 \u00E9loignez-vous, la heurter fait tr\u00E8s mal !',
+  { id: 'whale', prio: 7,
+    html: '<b style="color:#4488cc">Baleine</b>. 56% en avalent du plastique. Respect total.',
     cond: () => _whaleSurfacedVisible(),
   },
-  {
-    id: 'spout',
-    html: '<span class="tip-icon">💨</span> Le souffle blanc signale la baleine \u2014 fuyez !',
+  { id: 'spout', prio: 9,
+    html: 'Souffle blanc = elle remonte sous toi. Bouge.',
     cond: () => whaleSpoutParticles.length > 0,
   },
-  {
-    id: 'ram',
-    html: '<span class="tip-icon">💥</span> Foncer en <b style="color:#ffaa00">TURBO</b> sur un pirate inflige de gros d\u00E9g\u00E2ts',
+  { id: 'ram', prio: 5,
+    html: 'TURBO + PIRATE = POESIE !!! (Si tu choisis de taper, bien s\u00FBr.)',
     cond: () => _closePirate() && input.boost,
   },
-  {
-    id: 'mine',
-    html: '<span class="tip-icon">💣</span> Attention aux zones rouges \u2014 mines et bombes !',
+  { id: 'mine', prio: 9,
+    html: 'Zone rouge : \u00E9vite. C\u2019est pas n\u00E9gociable.',
     cond: () => _mineOrBombNear(),
   },
-  {
-    id: 'hide',
-    html: '<span class="tip-icon">🏝️</span> Cachez-vous derri\u00E8re l\u2019\u00EEle pour semer les pirates',
+  { id: 'hide', prio: 6,
+    html: 'Derri\u00E8re l\u2019\u00EEle. Les pirates voient plus rien.',
     cond: () => _closePirate() && localPlayer.health < MAX_HEALTH * 0.6,
   },
   // -------- COACHING TIPS (reactive to what the player ISN'T doing) --------
-  {
-    id: 'coach-boost',
-    html: '<span class="tip-icon">💨</span> Essayez <span class="tip-key">ESPACE</span> \u2014 le boost vous rend bien plus rapide !',
-    // Player has been playing 10+s, has energy, hasn't boosted yet
+  { id: 'coach-boost', prio: 3,
+    html: 'T\u2019as du plastique \u00E0 cramer pour le turbo. <span class="tip-key">ESPACE</span>. FAUT QUE JE LE FASSE MOI-M\u00CAME ?!',
     cond: () => !_tutStats.hasBoosted && gameTime > 10 && localPlayer.boostEnergy > 0.3 && _playerMoving(),
   },
-  {
-    id: 'coach-fire-pirate',
-    html: '<span class="tip-icon">🔥</span> Tirez une boule de feu avec <span class="tip-key">MAJ</span> pour attaquer le pirate !',
-    // Pirate visible, player has fireball unlocked, has energy, hasn't fired yet
+  { id: 'coach-fire-pirate', prio: 6,
+    html: 'Juste pour info : les pirates meurent aussi si tu tires. <span class="tip-key">SHIFT</span>. Ou pas. Libre.',
     cond: () => _visiblePirate() && !_tutStats.hasFired && localPlayer.totalCollected >= FIREBALL_UNLOCK_COST && localPlayer.boostEnergy > 0.25,
   },
-  {
-    id: 'coach-fire-general',
-    html: '<span class="tip-icon">🔥</span> Maintenez <span class="tip-key">MAJ</span> pour charger une boule de feu plus puissante',
-    // Player unlocked fireball but hasn't tried it
+  { id: 'coach-fire-general', prio: 3,
+    html: 'Boule de feu d\u00E9bloqu\u00E9e. <span class="tip-key">SHIFT</span> si t\u2019as envie. Pas obligatoire.',
     cond: () => !_tutStats.hasFired && localPlayer.totalCollected >= FIREBALL_UNLOCK_COST && gameTime > 45 && localPlayer.boostEnergy > 0.3,
   },
-  {
-    id: 'coach-fire-locked',
-    html: '<span class="tip-icon">&#129704;</span> Continue \u00E0 collecter ! <b>50 plastiques</b> = boule de feu d\u00E9bloqu\u00E9e',
-    // Fireball still locked, player has been playing a bit, halfway there
+  { id: 'coach-fire-locked', prio: 3,
+    html: '\u00C0 <b>50</b> plastiques, boule de feu. T\u2019approches. Respire.',
     cond: () => localPlayer.totalCollected >= 25 && localPlayer.totalCollected < FIREBALL_UNLOCK_COST,
   },
-  {
-    id: 'coach-low-hp',
-    html: '<span class="tip-icon">💗</span> PV bas ! Cherchez un plastique <b style="color:#ff66aa">rose</b> pour vous soigner',
-    // Player is low HP, pink plastic exists somewhere
+  { id: 'coach-low-hp', prio: 10,
+    html: 'T\u2019ES EN PLS !!! ROSE !!! MAINTENANT !!!',
     cond: () => localPlayer.health < MAX_HEALTH * 0.35 && garbage.some(g => g && g.isHeal),
   },
-  {
-    id: 'coach-idle-collect',
-    html: '<span class="tip-icon">♻️</span> Collectez du plastique pour recharger votre boost et marquer des points',
-    // No collect in 20s after the game has been running
+  { id: 'rank-last', prio: 4,
+    html: 'Dernier. J\u2019ai honte. J\u2019ai tellement honte.',
+    cond: () => gameTime > 35 && _totalRacers() >= 3 && _playerRank() === _totalRacers(),
+  },
+  { id: 'rank-first', prio: 5,
+    html: 'PREMIER !!! ON EST LES ROIS !!! LES DIEUX !!! LES L\u00C9GENDES !!!',
+    cond: () => gameTime > 25 && _totalRacers() >= 2 && _playerRank() === 1 && localPlayer.totalCollected >= 15,
+  },
+  { id: 'coach-idle-collect', prio: 3,
+    html: 'On fait quoi, l\u00E0, on m\u00E9dite ? Le 7\u1D49 continent t\u2019attend.',
     cond: () => gameTime > 25 && (gameTime - _tutStats.lastCollectTime) > 20,
   },
-  {
-    id: 'coach-being-hit',
-    html: '<span class="tip-icon">🛡️</span> Vous prenez des d\u00E9g\u00E2ts ! Utilisez le boost pour fuir ou ripostez au feu',
-    // 3+ hits recently
+  { id: 'coach-being-hit', prio: 8,
+    html: 'Tu prends des tartes en s\u00E9rie. \u00C7a me fait mal, physiquement.',
     cond: () => _tutStats.hitCount >= 3 && (gameTime - _tutStats.lastHitTime) < 4,
+  },
+  // -------- Event-driven 4th-wall triggers --------
+  { id: 'first-boost', prio: 6,
+    html: 'AH OUI !!! ON CRAME DU PLASTIQUE POUR AVANCER !!! L\u2019ABSURDE POETIQUE !!!',
+    cond: () => _tutStats.hasBoosted && (gameTime - _tutStats.firstBoostTime) < 0.6,
+  },
+  { id: 'first-fire', prio: 6,
+    html: 'PREMIERE BOULE DE FEU !!! LE FEU !!! Oh c\u2019\u00E9tait magnifique.',
+    cond: () => _tutStats.hasFired && (gameTime - _tutStats.lastFireTime) < 0.6 && !_seenTips['first-fire'],
+  },
+  { id: 'upgrade-first', prio: 3,
+    html: 'Premier <b>module</b> bient\u00F4t d\u00E9bloqu\u00E9. Pr\u00E9pare-toi mentalement.',
+    cond: () => !upgradeActive && localPlayer.totalCollected >= 10 && localPlayer.totalCollected < 20 && (playerUpgrades.speed + playerUpgrades.magnet + playerUpgrades.solar_panel) === 0,
+  },
+  { id: 'upgrade-open', prio: 8,
+    html: 'MODULE DISPONIBLE !!! Choisis : <b style="color:#ffbe3a">Vitesse</b>, <b style="color:#6fd6ff">Aimant</b>, <b style="color:#ffe380">Solaire</b>.',
+    cond: () => upgradeActive,
+  },
+  { id: 'upgrade-speed', prio: 4,
+    html: 'Vitesse +1. On avance plus vite, on nettoie plus. L\u2019\u00E9quation est belle.',
+    cond: () => !upgradeActive && playerUpgrades.speed >= 1 && gameTime > 15 && !_seenTips['upgrade-speed'],
+  },
+  { id: 'upgrade-magnet', prio: 4,
+    html: 'Aimant \u00E9quip\u00E9. Les microplastiques viennent \u00E0 toi maintenant. Classe.',
+    cond: () => !upgradeActive && playerUpgrades.magnet >= 1 && gameTime > 15 && !_seenTips['upgrade-magnet'],
+  },
+  { id: 'upgrade-solar', prio: 4,
+    html: 'Panneau solaire. L\u2019\u00E9nergie recharge toute seule. J\u2019aime.',
+    cond: () => !upgradeActive && playerUpgrades.solar_panel >= 1 && gameTime > 15 && !_seenTips['upgrade-solar'],
+  },
+  { id: 'upgrade-stacked', prio: 5,
+    html: 'Module +2 empil\u00E9 !!! Ton bateau devient une BETE !!!',
+    cond: () => !upgradeActive && (playerUpgrades.speed >= 2 || playerUpgrades.magnet >= 2 || playerUpgrades.solar_panel >= 2),
+  },
+  // Double-module euphoria: two different modules equipped (one of each
+  // type) within the same run.
+  { id: 'upgrade-double', prio: 7,
+    html: 'DEUX MODULES !!! DIFFERENTS !!! T\u2019ES EN TRAIN DE RETROFITTER UN BATEAU EN DIRECT !!!',
+    cond: () => !upgradeActive && ((playerUpgrades.speed >= 1 ? 1 : 0) + (playerUpgrades.magnet >= 1 ? 1 : 0) + (playerUpgrades.solar_panel >= 1 ? 1 : 0)) >= 2,
+  },
+  // Full loadout: one of each — the robot loses it completely.
+  { id: 'upgrade-full', prio: 8,
+    html: 'LES TROIS MODULES !!! VITESSE, AIMANT, SOLAIRE !!! LA SAINTE TRINITE !!! CAPITAINE JE T\u2019AIME !!!',
+    cond: () => !upgradeActive && playerUpgrades.speed >= 1 && playerUpgrades.magnet >= 1 && playerUpgrades.solar_panel >= 1,
+  },
+  // Combo ladder — the excitement ramps per tier.
+  { id: 'combo-huge', prio: 8,
+    html: 'COMBO x<b>8</b> !!! IL EST POSSEDE !!! NE LE TOUCHEZ PAS !!!',
+    cond: () => comboCount >= 8,
+  },
+  { id: 'combo-insane', prio: 9,
+    html: 'COMBO x<b>10</b> !!! STATISTIQUEMENT IMPOSSIBLE !!! JE SUIS BOULEVERSE !!!',
+    cond: () => comboCount >= 10,
+  },
+  { id: 'post-respawn', prio: 5,
+    html: 'Et c\u2019est reparti. Entre nous, je te regardais couler.',
+    cond: () => !respawnActive && _tutStats.hitCount > 0 && localPlayer.health > MAX_HEALTH * 0.9 && gameTime > 20,
+  },
+  { id: 'low-time', prio: 9,
+    html: '<b>30 secondes</b>. ON LACHE RIEN CAPITAINE !',
+    cond: () => gameTimeRemaining <= 30 && gameTimeRemaining > 10 && !gameOver,
+  },
+  { id: 'last-10s', prio: 10,
+    html: '10 SECONDES !!! TOUT CE QUI FLOTTE !!! MAINTENANT !!!',
+    cond: () => gameTimeRemaining <= 10 && gameTimeRemaining > 0 && !gameOver,
+  },
+  { id: 'collected-100', prio: 5,
+    html: '<b>100</b> plastiques !!! J\u2019Y CROYAIS PAS !!! Je retire tout ce que j\u2019ai dit !',
+    cond: () => localPlayer.totalCollected >= 100,
+  },
+  { id: 'meta-no-sense', prio: 1,
+    html: 'Un robot qui parle, un bateau solaire, des pirates. Ne cherche pas.',
+    cond: () => gameTime > 70 && gameTime < 95,
+  },
+  { id: 'meta-watching', prio: 2,
+    html: 'Je t\u2019ai vu heurter cette \u00EEle. Je juge en silence.',
+    cond: () => _tutStats.hitCount >= 1 && gameTime > 30 && (gameTime - _tutStats.lastHitTime) < 2 && !_visiblePirate(),
+  },
+  { id: 'wave-two-taunt', prio: 9,
+    html: 'TROIS pirates !!! PARCE QUE POURQUOI PAS !!!',
+    cond: () => extraPirateWave2 && gameTime > GAME_DURATION - 28,
   },
 ];
 
@@ -7412,33 +8238,299 @@ function updateTips(dt) {
   localPlayer._tutPrevHealth = localPlayer.health;
 
   _tipCooldown = Math.max(0, _tipCooldown - dt);
-  if (_activeTip) {
-    if (gameTime >= _activeTip.hideAt) {
-      tipsEl.classList.remove('active');
-      _seenTips[_activeTip.tip.id] = true;
-      _activeTip = null;
-      _tipCooldown = 1.0;
-    }
-    return;
-  }
-  if (_tipCooldown > 0) return;
 
-  // Tip predicates scan garbage/pirate arrays — only check 4 times per second,
-  // not every frame. Plenty responsive and cuts CPU significantly.
+  // Close out an active tip when its time is up.
+  if (_activeTip && gameTime >= _activeTip.hideAt) {
+    tipsEl.classList.remove('active');
+    if (repoCanvasEl) repoCanvasEl.classList.remove('talking');
+    if (_typewriteTimer) { clearInterval(_typewriteTimer); _typewriteTimer = null; }
+    _seenTips[_activeTip.tip.id] = true;
+    _activeTip = null;
+    _tipCooldown = 2.5;
+  }
+
+  // Scan 4 times/second to keep CPU low.
   _tipScanTimer += dt;
   if (_tipScanTimer < 0.25) return;
   _tipScanTimer = 0;
 
+  // Collect every eligible tip, then pick the one with the highest
+  // priority. Higher-priority tips can PREEMPT a lower-priority one
+  // that's currently showing (game-ending warnings cut through flavor).
+  let best = null;
   for (let i = 0; i < TIPS.length; i++) {
     const tip = TIPS[i];
     if (_seenTips[tip.id]) continue;
-    if (!tip.cond()) continue;
-    tipsEl.innerHTML = tip.html;
-    tipsEl.classList.add('active');
-    _activeTip = { tip, showTime: gameTime, hideAt: gameTime + 5.0 };
-    break;
+    if (_activeTip && _activeTip.tip.id === tip.id) continue;
+    try { if (!tip.cond()) continue; } catch (e) { continue; }
+    const p = tip.prio || 1;
+    if (!best || p > best.prio) best = { tip, prio: p, idx: i };
   }
+  if (!best) return;
+
+  if (_activeTip) {
+    // Only interrupt when the new tip is clearly more important.
+    if (best.prio <= (_activeTip.tip.prio || 1) + 1) return;
+    // Preempt: swap in the higher-priority tip immediately.
+    if (_typewriteTimer) { clearInterval(_typewriteTimer); _typewriteTimer = null; }
+    _seenTips[_activeTip.tip.id] = true;
+  } else {
+    if (_tipCooldown > 0) return;
+  }
+  tipsEl.classList.add('active');
+  if (repoCanvasEl) repoCanvasEl.classList.add('talking');
+  _typewriteTip(best.tip.html);
+  // High-priority tips linger a touch longer so they can be read.
+  const hold = best.prio >= 9 ? 7.5 : best.prio >= 6 ? 6.5 : 5.5;
+  _activeTip = { tip: best.tip, showTime: gameTime, hideAt: gameTime + hold };
 }
+
+// ---- Typewriter reveal for the robot's speech bubble ----
+// The bubble text is HTML (it contains <b>, <span class="tip-key">, etc.),
+// so we can't just animate a substring of innerHTML — that would break
+// partial tags and mangle entities. Instead, tokenize once: tags are
+// "atomic" (rendered instantly when we cross them), text is revealed
+// character by character. A blinking caret trails the cursor while it's
+// still typing.
+let _typewriteTimer = null;
+// --- Robot voice: short procedural beeps per character.
+// Animal-Crossing style — pitch depends on the letter and whether the
+// tip is "shouting" (ALL CAPS / !!!), so the bi-polar mood is audible.
+let _lastBeepAt = 0;
+function _robotBeep(ch, excited) {
+  const ctx = (typeof _ensureAudioCtx === 'function' && _ensureAudioCtx()) || null;
+  if (!ctx || !_audioBus) return;
+  // Rate-limit so we never beep faster than once per ~55ms
+  const now = ctx.currentTime;
+  if (now - _lastBeepAt < 0.055) return;
+  _lastBeepAt = now;
+  // Pitch depends on the character so syllables read as "speech" not Morse
+  const code = ch.toLowerCase().charCodeAt(0) || 97;
+  const baseHz = excited ? 620 : 380;
+  const spread = excited ? 260 : 140;
+  const freq = baseHz + ((code * 37) % 97) / 97 * spread;
+  const osc = ctx.createOscillator();
+  osc.type = excited ? 'square' : 'triangle';
+  osc.frequency.value = freq;
+  const gain = ctx.createGain();
+  const vol = excited ? 0.11 : 0.07;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(vol, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.065);
+  osc.connect(gain);
+  gain.connect(_audioBus);
+  osc.start(now);
+  osc.stop(now + 0.08);
+}
+function _typewriteTip(html) {
+  if (_typewriteTimer) { clearInterval(_typewriteTimer); _typewriteTimer = null; }
+  // Tokenize: sequence of { type:'tag'|'text', value }
+  const tokens = [];
+  let total = 0;
+  const re = /<[^>]+>/g;
+  let last = 0, m;
+  while ((m = re.exec(html)) !== null) {
+    if (m.index > last) {
+      const t = html.slice(last, m.index);
+      tokens.push({ type: 'text', value: t });
+      total += t.length;
+    }
+    tokens.push({ type: 'tag', value: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < html.length) {
+    const t = html.slice(last);
+    tokens.push({ type: 'text', value: t });
+    total += t.length;
+  }
+  // Mood: if the payload contains "!!!" or is mostly caps, the robot
+  // shouts — louder, brighter beeps.
+  const plain = html.replace(/<[^>]+>/g, '');
+  const letters = plain.replace(/[^A-Za-z]/g, '');
+  const caps = letters.replace(/[^A-Z]/g, '').length;
+  const excited = plain.includes('!!!') || (letters.length > 8 && caps / letters.length > 0.55);
+  let shown = 0;
+  const CARET = '<span class="tip-caret">\u258C</span>';
+  const render = () => {
+    let left = shown, out = '';
+    for (const tok of tokens) {
+      if (tok.type === 'tag') { out += tok.value; continue; }
+      if (left >= tok.value.length) { out += tok.value; left -= tok.value.length; }
+      else { out += tok.value.slice(0, left); left = 0; break; }
+    }
+    tipsEl.innerHTML = out + (shown < total ? CARET : '');
+  };
+  // Return the character at position `shown` in the concatenated text
+  const charAt = (idx) => {
+    let left = idx;
+    for (const tok of tokens) {
+      if (tok.type === 'tag') continue;
+      if (left < tok.value.length) return tok.value.charAt(left);
+      left -= tok.value.length;
+    }
+    return '';
+  };
+  render();
+  // ~45 chars/second. Beep on letters only, every other char so it
+  // sounds like syllables not noise.
+  _typewriteTimer = setInterval(() => {
+    const c = charAt(shown);
+    shown += 1;
+    render();
+    if (/[a-zA-Z\u00C0-\u024F]/.test(c) && (shown % 2 === 0)) _robotBeep(c, excited);
+    if (shown >= total) { clearInterval(_typewriteTimer); _typewriteTimer = null; }
+  }, 22);
+}
+
+// ---- REPO robot avatar (bottom-left) ----
+// A small dedicated three.js scene renders the REPO robot GLB into the
+// corner canvas. Runs at a low FPS (30) to save GPU and only redraws
+// when the canvas is visible. The "talking" CSS class handles bounce.
+(function _initRepoRobot() {
+  const canvas = document.getElementById('repo-canvas');
+  if (!canvas) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = 160, H = 200;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(W, H, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+  window.__repo = { renderer, scene: null, camera: null, robot: null };
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, W / H, 0.05, 50);
+  window.__repo.scene = scene;
+  window.__repo.camera = camera;
+  // Lighting: bright hemi + key + rim — so the robot reads clearly
+  // even with metallic/emissive PBR materials in a small viewport.
+  scene.add(new THREE.HemisphereLight(0xdff4ff, 0x142030, 1.2));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const key = new THREE.DirectionalLight(0xffffff, 1.6);
+  key.position.set(2, 3, 2.5);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x66ccff, 0.9);
+  rim.position.set(-2, 1.2, -1.5);
+  scene.add(rim);
+  const fill = new THREE.PointLight(0xffffff, 0.8, 10);
+  fill.position.set(0, 0, 3);
+  scene.add(fill);
+
+  let robot = null;
+  let mixer = null;
+  let greetAction = null;
+  let lastRender = 0;
+  let lastClockTime = performance.now() / 1000;
+  const RENDER_INTERVAL = 1 / 30;
+  // Load the PBR textures separately and bind them to the matching
+  // material by mesh name (BODY* → Body_*.png, PARTS* → parts_*.png).
+  // The FBX→GLB roundtrip drops texture bindings, so we patch them in.
+  const _texLdr = new THREE.TextureLoader();
+  const _lt = (p, srgb) => {
+    const t = _texLdr.load('./public/assets/repo_robot/' + p);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.flipY = false; // glTF convention
+    return t;
+  };
+  const repoTex = {
+    body:  { base: _lt('Body_BaseColor.png', true),  normal: _lt('Body_Normal.png'),  rough: _lt('Body_Roughness.png'),  metal: _lt('Body_Metallic.png'),  emis: _lt('Body_Emissive.png', true) },
+    parts: { base: _lt('parts_BaseColor.png', true), normal: _lt('parts_Normal.png'), rough: _lt('parts_Roughness.png'), metal: _lt('parts_Metallic.png'), emis: _lt('parts_Emissive.png', true) },
+  };
+  gltfLoader.load(
+    './public/assets/repo_robot/REPO.glb',
+    (gltf) => {
+      robot = gltf.scene;
+      robot.traverse((n) => {
+        if (!n.isMesh || !n.material) return;
+        const name = (n.name || '').toLowerCase();
+        const parentName = (n.parent && n.parent.name || '').toLowerCase();
+        const isBody = name.includes('body') || parentName.includes('body');
+        const set = isBody ? repoTex.body : repoTex.parts;
+        n.material.map          = set.base;
+        n.material.normalMap    = set.normal;
+        n.material.roughnessMap = set.rough;
+        n.material.metalnessMap = set.metal;
+        n.material.emissiveMap  = set.emis;
+        n.material.emissive     = new THREE.Color(0x333333);
+        n.material.emissiveIntensity = 0.6;
+        n.material.metalness    = 1.0;
+        n.material.roughness    = 1.0;
+        n.material.envMapIntensity = 1.0;
+        n.material.needsUpdate  = true;
+        n.frustumCulled = false;
+      });
+      // Center the model and fit it to the tiny viewport with padding
+      const bbox = new THREE.Box3().setFromObject(robot);
+      const size = bbox.getSize(new THREE.Vector3());
+      const center = bbox.getCenter(new THREE.Vector3());
+      robot.position.sub(center);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      robot.scale.setScalar(1.5 / maxDim);
+      // Shift robot DOWN in the frame (so head isn't cut), and pull
+      // the camera back enough to leave generous padding all around.
+      robot.position.y -= 1.35;
+      const fitH = 2.9; // bigger = more padding / smaller robot in frame
+      const fov = camera.fov * Math.PI / 180;
+      const dist = (fitH * 0.5) / Math.tan(fov * 0.5) + 0.4;
+      camera.position.set(0, -0.95, dist);
+      camera.lookAt(0, -0.95, 0);
+      scene.add(robot);
+      window.__repo.robot = robot;
+      // Play the embedded "Greet" clip — the FBX ships an armature
+      // animation we can drive via AnimationMixer.
+      if (gltf.animations && gltf.animations.length) {
+        mixer = new THREE.AnimationMixer(robot);
+        greetAction = mixer.clipAction(gltf.animations[0]);
+        greetAction.setLoop(THREE.LoopRepeat);
+        greetAction.play();
+        window.__repo.mixer = mixer;
+        window.__repo.greet = greetAction;
+      }
+      console.log('[REPO] loaded, children:', robot.children.length, 'anim:', gltf.animations.length);
+    },
+    undefined,
+    (err) => { console.warn('REPO robot failed to load', err); window.__repo.error = String(err); }
+  );
+
+  const tick = (t) => {
+    requestAnimationFrame(tick);
+    const now = t * 0.001;
+    if (now - lastRender < RENDER_INTERVAL) return;
+    lastRender = now;
+    if (robot) {
+      const talking = canvas.classList.contains('talking');
+      const dt = now - lastClockTime;
+      // Talking: run the Greet clip. Silent: clamp to frame 0 with
+      // timeScale 0 so no time advances and the skeleton is fully still.
+      if (mixer && greetAction) {
+        if (talking) {
+          greetAction.timeScale = 1.6;
+          mixer.update(dt);
+        } else {
+          greetAction.time = 0;
+          greetAction.timeScale = 0;
+          mixer.update(0);
+        }
+      }
+      lastClockTime = now;
+      // Body pose: fully frozen when silent (no sway, no bounce, no
+      // rotation — the idle Greet pose alone). Lively when talking.
+      const Y_BASE = -1.75;
+      if (talking) {
+        const swayS = 2.6;
+        robot.rotation.y = Math.sin(now * swayS * 0.6) * 0.22;
+        robot.position.y = Y_BASE + Math.sin(now * swayS * 1.1) * 0.06;
+      } else {
+        robot.rotation.set(0, 0, 0);
+        robot.position.y = Y_BASE;
+      }
+    }
+    renderer.render(scene, camera);
+  };
+  requestAnimationFrame(tick);
+})();
 
 // -- Hit effect --
 function triggerHitEffect() {
@@ -7613,8 +8705,10 @@ function confirmUpgrade() {
   sfx.upgrade();
 }
 
-// Upgrade card click handlers
+// Upgrade card click + hover handlers. Hover plays a soft tick, click
+// uses the higher-pitched confirmation variant.
 document.querySelectorAll('.upgrade-card').forEach((card, i) => {
+  card.addEventListener('mouseenter', () => { try { sfx.uiHover(); } catch (e) {} });
   card.addEventListener('click', () => {
     upgradeSelection = i;
     refreshUpgradeCards();
@@ -7902,6 +8996,27 @@ function startHydronauteRecapScene() {
 function showGameOver() {
   stopOceanAmbient();
   stopMotorLoop();
+  // End-menu Hydronaute theme — starts now, after the pre-ending
+  // fade-out + silence. Smoothly fades in as the recap appears.
+  try {
+    if (!themeEndgameAudio) {
+      themeEndgameAudio = new Audio('./public/assets/music/theme-endgame.mp3');
+      themeEndgameAudio.loop = true;
+    }
+    themeEndgameAudio.volume = 0;
+    themeEndgameAudio.currentTime = 0;
+    themeEndgameAudio.play().catch(() => {});
+    const t0 = performance.now();
+    const FADE_MS = 3000;
+    const tick = () => {
+      if (!themeEndgameAudio) return;
+      const k = Math.min(1, (performance.now() - t0) / FADE_MS);
+      const eased = k * k * (3 - 2 * k);
+      try { themeEndgameAudio.volume = eased * MUSIC_MAX_VOL; } catch (e) {}
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    tick();
+  } catch (e) { /* noop */ }
   const allEntries = [
     { name: localPlayer.name, score: localPlayer.totalCollected, isLocal: true },
     ...bots.filter(b => !b.isWhale && !b.isHydro).map(b => ({ name: b.name, score: b.totalCollected, isLocal: false })),
@@ -8548,6 +9663,15 @@ function applyUpgradeVisuals(mesh, upgrades, id, orderList) {
   }
   _exoFlatFrameY = _savedFlatY;         // restore — doesn't affect other boats
 
+  // Play the install SFX for the NEW last module — only on the local
+  // player (bot installs shouldn't blast the player's ears). `lastOrderLen`
+  // was captured before the rebuild so we can tell if this is a genuine
+  // addition or a re-arm/reset (avoid playing on every respawn etc).
+  if (id === 'local' && order.length > (vis._lastOrderLen || 0)) {
+    try { sfx.moduleInstall(order[order.length - 1]); } catch (e) {}
+  }
+  vis._lastOrderLen = order.length;
+
   vis.exoSig = sig;
   vis.exoCounts = null;                 // legacy field no longer used
   vis.solar_panels.length = 0; vis.motors.length = 0; vis.pumps.length = 0;
@@ -9165,7 +10289,8 @@ function getBoatRiseOffset(dt) {
       spawnSplash(localPlayer.x,       localPlayer.z);
       spawnSplash(localPlayer.x + 1.5, localPlayer.z);
       spawnSplash(localPlayer.x - 1.5, localPlayer.z);
-      sfx.crash();
+      // Boat rising from respawn — water splash is the right effect.
+      sfx.heavySplash(localPlayer.x, localPlayer.z);
     } catch (e) { /* noop */ }
   }
   return offset;
@@ -9875,8 +11000,31 @@ function gameLoop(timestamp) {
   }
   if (!extraPirateWave2 && gameTime >= GAME_DURATION - 30) {
     extraPirateWave2 = true;
+    _wave2StartTime = performance.now() / 1000;
     makePirateEntity(pirates.length, true);
     spawnFloatingText(0, 0, 'DERNIER RENFORT !', '#ff2200');
+  }
+
+  // --- Pre-ending fade-out ---
+  // Starting ~3s before the clock hits zero, fade the live music (main
+  // + pirate) out over 2s, then hold 1s of silence. The recap theme is
+  // then triggered by showGameOver().
+  if (!_endgameTakeover && gameTime >= GAME_DURATION - 3) {
+    _endgameTakeover = true;
+    try {
+      const startMain   = themeIngameAudio ? themeIngameAudio.volume : 0;
+      const startPirate = themePirateAudio ? themePirateAudio.volume : 0;
+      const t0 = performance.now();
+      const FADE_MS = 2000;
+      const tick = () => {
+        const k = Math.min(1, (performance.now() - t0) / FADE_MS);
+        const eased = k * k * (3 - 2 * k);
+        try { if (themeIngameAudio) themeIngameAudio.volume = startMain   * (1 - eased); } catch (e) {}
+        try { if (themePirateAudio) themePirateAudio.volume = startPirate * (1 - eased); } catch (e) {}
+        if (k < 1) requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (e) { /* noop */ }
   }
 
   // --- Fireball unlock banner (fires once when threshold is crossed) ---
@@ -10065,6 +11213,47 @@ function gameLoop(timestamp) {
     // Engine is off (pre-crank, cranking, or dead after respawn) — full silence.
     updateMotorLoop(dt, false, false, false);
   }
+  // In-game music: single looping calm track, ducks to 0 during respawn / game-over.
+  updateThemeMusic(0, respawnActive || gameOver);
+
+  // ---- DANGER SUSPENSE SYSTEM ----
+  // Scan for active threats near the player: whale, pirates, approaching
+  // bots. Compute an overall "danger intensity" 0..1 — suspense loop
+  // fades in + a stinger fires ONCE when danger transitions from safe
+  // to active. Released (fades out) once danger clears for 1 second.
+  {
+    let danger = 0;
+    // Whale — massive, always scary when close. Danger zone starts
+    // VERY far (90 units) because the hitbox is huge; stinger fires
+    // well before the kill zone so the player has time to react.
+    for (const b of bots) {
+      if (b.isWhale) {
+        const d = Math.hypot(b.x - localPlayer.x, b.z - localPlayer.z);
+        if (d < 90) danger = Math.max(danger, 1 - d / 90);
+      }
+    }
+    // Pirates — danger scales with proximity
+    for (const p of pirates) {
+      if (!p.emerged) continue;
+      const d = Math.hypot(p.x - localPlayer.x, p.z - localPlayer.z);
+      if (d < 45) danger = Math.max(danger, 0.85 * (1 - d / 45));
+    }
+    // Low HP — separate danger stream at medium intensity
+    if (localPlayer.health < MAX_HEALTH * 0.3) {
+      danger = Math.max(danger, 0.5);
+    }
+    // Muted during pause screens
+    if (respawnActive || gameOver || countdownActive) danger = 0;
+    updateSuspense(danger);
+    // Stinger on transition safe → danger (0.15 threshold with 1s cooldown)
+    if (danger > 0.15 && !_dangerActive && (gameTime - _lastStingerTime) > 5) {
+      _dangerActive = true;
+      _lastStingerTime = gameTime;
+      sfx.dangerStinger();
+    } else if (danger < 0.05 && _dangerActive) {
+      _dangerActive = false;
+    }
+  }
   // Boost-landing splash: when turbo drops, the hull falls back to the water
   // with momentum — spawn a big water ring at the player's footprint.
   if (!isBoosting && wasBoosting) {
@@ -10074,7 +11263,8 @@ function gameLoop(timestamp) {
     const _lfx = Math.sin(localPlayer.rotation) * 1.6;
     const _lfz = Math.cos(localPlayer.rotation) * 1.6;
     spawnSplash(localPlayer.x + _lfx, localPlayer.z + _lfz);
-    try { sfx.crash(); } catch (e) { /* noop */ }
+    // Boost-landing: lighter water splash, player hull landing.
+    try { sfx.waterSplash(localPlayer.x, localPlayer.z); } catch (e) { /* noop */ }
   }
   wasBoosting = isBoosting;
 
@@ -10186,6 +11376,21 @@ function gameLoop(timestamp) {
     createWhaleEntity();
     whaleState = 'surfacing';
     whaleStateTimer = WHALE_TRANSITION_TIME;
+    // Dramatic cry + splash on arrival (spatialised at whale position)
+    const _whaleBot = bots.find(b => b.isWhale);
+    if (_whaleBot) {
+      try { sfx.heavySplash(_whaleBot.x, _whaleBot.z); } catch (e) {}
+      try { sfx.whaleCall(_whaleBot.x, _whaleBot.z); } catch (e) {}
+    }
+  }
+  // Ambient whale calls — random distant cries every 12-25 s while the
+  // whale is on the surface. Creates presence even when she's far.
+  if (whaleSpawned && (whaleState === 'surface' || whaleState === 'surfacing')) {
+    if (gameTime > _nextWhaleCallAt) {
+      _nextWhaleCallAt = gameTime + 12 + Math.random() * 13;
+      const _wb = bots.find(b => b.isWhale);
+      if (_wb) { try { sfx.whaleCall(_wb.x, _wb.z); } catch (e) {} }
+    }
   }
 
   // ---- BOTS ----
@@ -10241,7 +11446,7 @@ function gameLoop(timestamp) {
         }
       }
     }
-    movePlayer(bot, bi, dt, botUpg);
+    movePlayer(bot, bi, dt * (_dda.botSpeedMul || 1), botUpg);
     // Whale: update animation mixer + skip garbage/upgrades/death
     if (bot.isWhale) {
       if (whaleMixer) whaleMixer.update(dt);
@@ -10278,12 +11483,18 @@ function gameLoop(timestamp) {
   }
 
   // ---- PIRATES ----
+  // Dynamic difficulty: recompute multipliers once per second so the
+  // bots + pirates track the player's skill band without jittering.
+  if (gameTime >= _dda.nextRecalc) {
+    _recomputeDDA();
+    _dda.nextRecalc = gameTime + 1.0;
+  }
   _allPlayers.length = 0;
   _allPlayers.push(localPlayer);
   for (let bi = 0; bi < bots.length; bi++) _allPlayers.push(bots[bi]);
   const allPlayers = _allPlayers;
   for (const pirate of pirates) {
-    const res = updatePirate(pirate, allPlayers, dt, gameTime);
+    const res = updatePirate(pirate, allPlayers, dt * (_dda.pirateSpeedMul || 1), gameTime);
     for (const e of res.events) {
       spawnFloatingText(e.x, e.z, e.text, e.color);
       if (e.victimId === 'whale') hydroTelemetry.collisionsReceived++;
@@ -11076,6 +12287,7 @@ function beginGame() {
   localPlayer.name = nameInput.value.trim() || 'Capitaine';
   document.getElementById('start-screen').hidden = true;
   document.getElementById('game-screen').hidden  = false;
+  // Music disabled for now — stopMenuMusic/startThemeMusic calls removed.
 
   // Wait for GLTF models (or fallback flags)
   const poll = () => {
@@ -11083,6 +12295,7 @@ function beginGame() {
       initGame();
       gameStarted = true;
       startOceanAmbient();
+      startThemeMusic();
       startMotorLoop();
       // Kick off the countdown fade — short: cover the very first awkward
       // frame where camera is still at world origin, then fade out fast
@@ -11181,9 +12394,9 @@ const _tutorialSteps = [
     emoji: '🔥',
     titleFr: 'Boule de feu',
     titleEn: 'Fireball',
-    bodyFr: "À partir de <b>50 plastiques collectés</b>, maintiens <b>MAJ</b> pour charger une boule de feu puis relâche. Utile contre les <b>pirates</b> qui essaient de saboter ta mission.",
+    bodyFr: "À partir de <b>50 plastiques collectés</b>, maintiens <b>SHIFT</b> pour charger une boule de feu puis relâche. Utile contre les <b>pirates</b> qui essaient de saboter ta mission.",
     bodyEn: "Once you've collected <b>50 plastic</b>, hold <b>SHIFT</b> to charge a fireball, release to fire. Useful against <b>pirates</b> trying to sabotage your mission.",
-    keys: ['MAJ'],
+    keys: ['SHIFT'],
   },
   {
     emoji: '⚠️',
@@ -11299,8 +12512,23 @@ window._openTutorial = openTutorial;
   _lazyGrabTutoEls();
   if (!_tutoEls.overlay) return;
   _tutoEls.close.addEventListener('click', closeTutorial);
-  _tutoEls.next.addEventListener('click', nextTutoStep);
-  _tutoEls.prev.addEventListener('click', prevTutoStep);
+  // Tiny click tick on nav — re-uses the pickup SFX at low volume,
+  // slightly pitched up so it reads as a UI beep, not a loot sound.
+  const tick = () => {
+    try {
+      const a = new Audio(sfxUrls.pickup);
+      a.volume = 0.28;
+      a.playbackRate = 1.6;
+      a.play().catch(() => {});
+    } catch (e) {}
+  };
+  // Hover tick on both nav buttons + the close button
+  const hoverTargets = [_tutoEls.next, _tutoEls.prev, _tutoEls.close];
+  hoverTargets.forEach(el => {
+    if (el) el.addEventListener('mouseenter', () => { try { sfx.uiHover(); } catch (e) {} });
+  });
+  _tutoEls.next.addEventListener('click', () => { tick(); nextTutoStep(); });
+  _tutoEls.prev.addEventListener('click', () => { tick(); prevTutoStep(); });
   // Click the dimmed background (not the card itself) to close.
   _tutoEls.overlay.addEventListener('click', (e) => {
     if (e.target === _tutoEls.overlay) closeTutorial();
@@ -11492,7 +12720,9 @@ function _renderStartBoatScenes(tSec) {
       const to   = (from < 0 ? +FINAL_X : -FINAL_X);
       driftX = from + (to - from) * ease;
     }
-    // Idle motion layered on top — yaw sway, gentle roll, Y bob.
+    // Gentle idle motion — subtle wave-riding sway, roll, and bob.
+    // No beat-syncing since music is muted. Left + right boats still
+    // get an opposite-phase feel via `phase` so they're not identical.
     entry.boatGroup.rotation.y = bs + Math.sin(tSec * 0.8 + phase) * 0.04;
     entry.boatGroup.rotation.z = Math.sin(tSec * 1.1 + phase) * 0.025;
     entry.boatGroup.position.x = driftX;
@@ -11600,7 +12830,7 @@ const I18N_STRINGS = {
     obj_title: 'Objectif',
     obj_body: 'Collecte le plastique qui flotte. Chaque morceau compte pour l\u2019oc\u00E9an.',
     ctrl_title: 'Contr\u00F4les',
-    ctrl_body: '<b>ZQSD</b> naviguer &middot; <b>Espace</b> boost &middot; <b>Maj</b> boule de feu (d\u00E8s 50 plastiques)',
+    ctrl_body: '<b>ZQSD</b> naviguer &middot; <b>Espace</b> boost &middot; <b>Shift</b> boule de feu (d\u00E8s 50 plastiques)',
     tip_title: 'Astuces',
     tip_body: 'Le plastique <b style="color:#ff88bb">rose</b> te soigne. \u00C9vite les pirates et la <b style="color:#4488cc">baleine</b> !',
     name_label: 'Nom du Capitaine',
