@@ -32,11 +32,12 @@ interface RoomState {
 }
 
 // Phase durations (ms)
-const LOBBY_MAX_MS     = 30_000; // max time to wait for more humans
+const LOBBY_MAX_MS     = 30_000; // max time to wait once >=2 humans are in
 const COUNTDOWN_MS     = 3_000;
 const PLAYING_MS       = 180_000; // 3 minutes
 const RECAP_MS         = 15_000;
 const TICK_MS          = 250;     // state-machine tick cadence
+const MIN_HUMANS_TO_START = 2;    // solo lobby never advances: use "Play offline" on the client
 
 const BOT_NAMES = ["Coral", "Marlin", "Triton", "Dory", "Splash", "Reef"];
 const COLORS    = ["#ff5a3c", "#ffd93d", "#4ade80", "#22d3ee", "#c084fc", "#fb7185"];
@@ -54,11 +55,13 @@ function initialState(): RoomState {
   };
 }
 
-// True iff every human in the lobby has clicked Ready. With zero humans,
-// we wait the full LOBBY_MAX_MS before starting (no bot-only games).
+// Lobby short-circuit: at least MIN_HUMANS_TO_START humans AND all of
+// them have clicked Ready. Solo humans are intentionally excluded so
+// the countdown never fires for a one-player lobby — they should hit
+// "Play offline" instead.
 function allHumansReady(state: RoomState): boolean {
   const humans = state.seats.filter((s) => s.kind === "human") as Extract<Seat, { kind: "human" }>[];
-  if (humans.length === 0) return false;
+  if (humans.length < MIN_HUMANS_TO_START) return false;
   return humans.every((h) => h.ready);
 }
 
@@ -98,7 +101,13 @@ export default class TrashureRoom implements Party.Server {
       return;
     }
     const color = COLORS[idx % COLORS.length];
+    const beforeCount = humanCount(this.state);
     this.state.seats[idx] = { kind: "human", id: conn.id, name: "Capitaine", ready: false, color };
+    // Starting the 30s lobby window: only once we actually have enough
+    // players to potentially begin. Solo lobby just sits waiting.
+    if (this.state.phase === "LOBBY" && beforeCount < MIN_HUMANS_TO_START && humanCount(this.state) >= MIN_HUMANS_TO_START) {
+      this.state.phaseEndsAt = Date.now() + LOBBY_MAX_MS;
+    }
     this.startTicker();
     this.broadcastState();
   }
@@ -154,8 +163,15 @@ export default class TrashureRoom implements Party.Server {
 
   // ---- state machine ----
   private tick() {
-    if (Date.now() < this.state.phaseEndsAt) return;
     const now = Date.now();
+    // Solo lobby never auto-advances — we need at least MIN_HUMANS_TO_START
+    // in the room before the 30s timer means anything. The client shows a
+    // "Play offline" button for solo players who don't want to wait.
+    if (this.state.phase === "LOBBY" && humanCount(this.state) < MIN_HUMANS_TO_START) {
+      // Keep the ticker alive (for state updates) but don't transition.
+      return;
+    }
+    if (now < this.state.phaseEndsAt) return;
     switch (this.state.phase) {
       case "LOBBY":
         if (humanCount(this.state) === 0) {

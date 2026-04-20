@@ -1070,7 +1070,7 @@
     }
     #wr-ready-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(0, 220, 200, 0.5); }
     #wr-ready-btn.on { filter: hue-rotate(15deg) brightness(1.05); }
-    #wr-leave-btn {
+    #wr-solo-btn, #wr-leave-btn {
       padding: 12px 22px;
       font-family: var(--font-heading); font-weight: 700; font-size: 0.85rem;
       letter-spacing: 0.12em; text-transform: uppercase;
@@ -1079,6 +1079,20 @@
       border: 1px solid rgba(180, 210, 230, 0.4);
       border-radius: 8px; cursor: pointer;
     }
+    #wr-solo-btn { border-color: rgba(255, 190, 58, 0.55); color: #ffd080; }
+    #wr-solo-btn:hover { background: rgba(255, 190, 58, 0.08); border-color: #ffd080; color: #ffe0a0; }
+    /* Start-screen "play solo" text link under the main buttons */
+    #start-solo-link {
+      display: inline-block;
+      margin-top: 12px;
+      font-family: var(--font-heading); font-size: 0.72rem;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: rgba(255, 200, 120, 0.78);
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(255, 200, 120, 0.35);
+      padding-bottom: 2px;
+    }
+    #start-solo-link:hover { color: #ffd080; border-bottom-color: #ffd080; }
     #waiting-room .wr-hint {
       font-size: 0.78rem; color: rgba(180, 210, 230, 0.7);
       max-width: 520px; text-align: center;
@@ -1717,6 +1731,7 @@
       <button id="start-btn" onclick="if(window._beginGame)window._beginGame()" data-i18n="start_btn">LARGUER LES AMARRES</button>
       <button id="tutorial-btn" onclick="if(window._openTutorial)window._openTutorial()" data-i18n="tuto_btn">TUTORIEL</button>
     </div>
+    <a id="start-solo-link" href="#" onclick="event.preventDefault(); if(window._beginSolo)window._beginSolo();" data-i18n="start_solo_link">Jouer hors ligne (solo)</a>
   </div>
 </div>
 
@@ -1910,6 +1925,7 @@
   <div class="wr-seats" id="wr-seats"></div>
   <div class="wr-actions">
     <button id="wr-ready-btn" data-i18n="wr_ready_btn">PRÊT</button>
+    <button id="wr-solo-btn" data-i18n="wr_solo_btn">Jouer en solo</button>
     <button id="wr-leave-btn" data-i18n="wr_leave_btn">Quitter</button>
   </div>
   <div class="wr-hint" id="wr-hint" data-i18n="wr_hint">Les sièges vides sont remplis par des bots. Dès que tous les joueurs sont prêts, la manche démarre.</div>
@@ -13182,29 +13198,39 @@ function _mpStartTickingTimer() {
   requestAnimationFrame(tick);
 }
 
+function _mpHumanCount() {
+  return (_mp.seats || []).filter((s) => s && s.kind === 'human').length;
+}
 function _mpRenderPhase() {
   if (!_mp.wrEl) return;
+  const soloBtn = document.getElementById('wr-solo-btn');
+  const isSolo  = _mpHumanCount() < 2;
   switch (_mp.phase) {
     case 'LOBBY':
       _mp.wrTitle.textContent = tr('wr_lobby_title');
-      _mpShowHint(tr('wr_hint'));
+      // innerHTML so <b> renders
+      _mp.wrHint.innerHTML = isSolo ? tr('wr_hint_waiting_solo') : tr('wr_hint');
       if (_mp.wrReady) _mp.wrReady.style.display = _mp.isSpectator ? 'none' : '';
+      if (soloBtn)     soloBtn.style.display     = _mp.isSpectator ? 'none' : '';
       break;
     case 'COUNTDOWN':
       _mp.wrTitle.textContent = tr('wr_countdown_title');
-      _mpShowHint(tr('wr_hint'));
+      _mp.wrHint.innerHTML    = tr('wr_hint');
       if (_mp.wrReady) _mp.wrReady.style.display = 'none';
+      if (soloBtn)     soloBtn.style.display     = 'none';
       break;
     case 'PLAYING':
       // Only shown if we're spectating or waiting for next round.
       _mp.wrTitle.textContent = _mp.isSpectator ? tr('wr_spectator_title') : tr('wr_lobby_title');
-      _mpShowHint(tr('wr_hint_playing'));
+      _mp.wrHint.innerHTML    = tr('wr_hint_playing');
       if (_mp.wrReady) _mp.wrReady.style.display = 'none';
+      if (soloBtn)     soloBtn.style.display     = '';
       break;
     case 'RECAP':
       _mp.wrTitle.textContent = tr('wr_recap_title');
-      _mpShowHint(tr('wr_hint_recap'));
+      _mp.wrHint.innerHTML    = tr('wr_hint_recap');
       if (_mp.wrReady) _mp.wrReady.style.display = 'none';
+      if (soloBtn)     soloBtn.style.display     = '';
       break;
   }
 }
@@ -13224,10 +13250,24 @@ function _mpToggleReady() {
 }
 function _mpLeave() {
   try { if (_mp.ws) _mp.ws.close(); } catch (e) {}
+  _mp.ws = null;
+  if (_mp.reconnectTimer) { clearTimeout(_mp.reconnectTimer); _mp.reconnectTimer = null; }
   _mpHideWaitingRoom();
   const ss = document.getElementById('start-screen');
   if (ss) { ss.hidden = false; ss.style.display = 'flex'; }
 }
+// Play-offline short-circuit: close the WS (if any), hide the lobby,
+// and launch the existing local round immediately. Used by the
+// "Jouer hors ligne" link on the start screen AND the "Jouer en solo"
+// button inside the lobby for impatient solo players.
+function beginSolo() {
+  try { if (_mp.ws) _mp.ws.close(); } catch (e) {}
+  _mp.ws = null;
+  if (_mp.reconnectTimer) { clearTimeout(_mp.reconnectTimer); _mp.reconnectTimer = null; }
+  _mpHideWaitingRoom();
+  _beginLocalRound();
+}
+window._beginSolo = beginSolo;
 
 // The original local-only startup path. We keep it as-is and wrap it
 // in beginGame() which routes through the lobby first.
@@ -13273,6 +13313,11 @@ function beginGame() {
   if (leaveBtn && !leaveBtn._bound) {
     leaveBtn.addEventListener('click', _mpLeave);
     leaveBtn._bound = true;
+  }
+  const soloBtn = document.getElementById('wr-solo-btn');
+  if (soloBtn && !soloBtn._bound) {
+    soloBtn.addEventListener('click', beginSolo);
+    soloBtn._bound = true;
   }
 }
 
@@ -14056,10 +14101,13 @@ const I18N_STRINGS = {
     wr_spectator_title: 'Spectateur',
     wr_ready_btn: 'PR\u00CAT',
     wr_unready_btn: 'PAS PR\u00CAT',
+    wr_solo_btn: 'Jouer en solo',
     wr_leave_btn: 'Quitter',
-    wr_hint: 'Les si\u00E8ges vides sont remplis par des bots. D\u00E8s que tous les joueurs sont pr\u00EAts, la manche d\u00E9marre.',
+    wr_hint: 'Les si\u00E8ges vides sont remplis par des bots. La manche d\u00E9marre quand <b>au moins 2 joueurs</b> sont pr\u00EAts.',
+    wr_hint_waiting_solo: 'En attente d\u2019un autre joueur... Tu peux cliquer <b>Jouer en solo</b> pour d\u00E9marrer tout de suite contre des bots.',
     wr_hint_playing: 'Une manche est en cours. Tu joueras \u00E0 la prochaine.',
     wr_hint_recap: 'R\u00E9cap de la manche en cours. Prochaine manche dans un instant.',
+    start_solo_link: 'Jouer hors ligne (solo)',
     wr_seat_human: 'Humain',
     wr_seat_bot: 'Bot',
     wr_seat_ready: 'PR\u00CAT',
@@ -14170,10 +14218,13 @@ const I18N_STRINGS = {
     wr_spectator_title: 'Spectator',
     wr_ready_btn: 'READY',
     wr_unready_btn: 'NOT READY',
+    wr_solo_btn: 'Play solo',
     wr_leave_btn: 'Leave',
-    wr_hint: 'Empty seats are filled by bots. As soon as all players are ready, the round starts.',
+    wr_hint: 'Empty seats are filled by bots. The round starts when <b>at least 2 players</b> are ready.',
+    wr_hint_waiting_solo: 'Waiting for another player... You can click <b>Play solo</b> to start against bots now.',
     wr_hint_playing: 'A round is in progress. You\u2019ll join the next one.',
     wr_hint_recap: 'Round recap in progress. Next round starts shortly.',
+    start_solo_link: 'Play offline (solo)',
     wr_seat_human: 'Human',
     wr_seat_bot: 'Bot',
     wr_seat_ready: 'READY',
