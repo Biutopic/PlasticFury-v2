@@ -12137,8 +12137,43 @@ function gameLoop(timestamp) {
     }
   }
 
+  // ---- MULTIPLAYER: map remote human seats onto rival-bot slots ----
+  // While connected to a live MP round, each non-self human seat on
+  // the server takes over one local rival-bot slot: we snap its pose
+  // from the server, skip its AI, and show the human's name. Bot
+  // slots (where the server has no human) keep running local AI as
+  // usual. Whale/Hydronaute are never overridden.
+  const _mpActive = !!(_mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched && _mp.remoteBoats && _mp.remoteBoats.length);
+  const _mpRemoteByBotId = new Map();
+  if (_mpActive) {
+    const rivals = [];
+    for (const b of bots) { if (!b.isWhale && !b.isHydro) rivals.push(b); }
+    for (let i = 0; i < _mp.remoteBoats.length && i < rivals.length; i++) {
+      _mpRemoteByBotId.set(rivals[i].id, _mp.remoteBoats[i]);
+    }
+  }
+
   // ---- BOTS ----
   for (const bot of bots) {
+    const _mpRemote = _mpRemoteByBotId.get(bot.id);
+    if (_mpRemote) {
+      // Ease toward the server pose — smoothing covers the 10 Hz gap.
+      const k = Math.min(1, dt * 12);
+      bot.x += (_mpRemote.x - bot.x) * k;
+      bot.z += (_mpRemote.z - bot.z) * k;
+      let da = _mpRemote.rot - bot.rotation;
+      while (da > Math.PI)  da -= 2 * Math.PI;
+      while (da < -Math.PI) da += 2 * Math.PI;
+      bot.rotation += da * k;
+      // Crude velocity from position delta, so wake/ripples still look right.
+      const vscale = dt > 0 ? 1 / dt : 0;
+      bot.vx = (_mpRemote.x - bot.x) * vscale;
+      bot.vz = (_mpRemote.z - bot.z) * vscale;
+      bot.name = _mpRemote.name || bot.name;
+      // Still emit a wake so the remote captain feels alive.
+      addBoatWake(bot.id, bot.x, bot.z, bot.vx, bot.vz, RIPPLE_BOAT_AMP);
+      continue; // skip local AI, movement, collection, etc.
+    }
     let bi = computeBotInput(bot, dt);
     const botUpg = bot.isWhale ? null : (bot.upgrades || null);
     // Bot crank state machine (fisher-boat bots only, not whale/hydro).
@@ -13058,6 +13093,10 @@ const _mp = {
   wrReady: null,
   reconnectTimer: null,
   pingWorker: null,
+  boatUpWorker: null,     // separate worker: sends own boat pose at 10 Hz
+  myPid: null,            // our persistent id (mirrored from _mpPid())
+  mySeatIdx: -1,          // which of the 4 server seats is ours
+  remoteBoats: [],        // [{ seatIdx, x, z, rot, name, color }] non-self humans
 };
 // Background tabs throttle setInterval to ~1 Hz (or worse) in modern
 // browsers, which would starve our heartbeat and make the other player
@@ -13089,6 +13128,33 @@ function _mpStartHeartbeat() {
 }
 function _mpStopHeartbeat() {
   if (_mp.pingWorker) { try { _mp.pingWorker.terminate(); } catch (e) {} _mp.pingWorker = null; }
+}
+// Own boat-pose uploader. Also worker-driven so it keeps running when
+// the tab isn't focused (a player watching another window should still
+// see us move, not freeze). 100 ms = 10 Hz, light enough for bandwidth.
+function _mpStartBoatUploader() {
+  if (_mp.boatUpWorker) _mp.boatUpWorker.terminate();
+  try {
+    const code = 'setInterval(function(){ self.postMessage(0); }, 100);';
+    const blob = new Blob([code], { type: 'application/javascript' });
+    _mp.boatUpWorker = new Worker(URL.createObjectURL(blob));
+    _mp.boatUpWorker.onmessage = () => {
+      if (!_mp.ws || _mp.ws.readyState !== WebSocket.OPEN) return;
+      if (_mp.phase !== 'PLAYING' || !_mp.roundLaunched) return;
+      if (typeof localPlayer === 'undefined' || !localPlayer) return;
+      try {
+        _mp.ws.send(JSON.stringify({
+          type: 'boat',
+          x: +localPlayer.x.toFixed(2),
+          z: +localPlayer.z.toFixed(2),
+          rot: +((localPlayer.rotation || 0).toFixed(3)),
+        }));
+      } catch (e) {}
+    };
+  } catch (e) { /* worker unavailable; we'll just live without upload */ }
+}
+function _mpStopBoatUploader() {
+  if (_mp.boatUpWorker) { try { _mp.boatUpWorker.terminate(); } catch (e) {} _mp.boatUpWorker = null; }
 }
 
 // Per-tab persistent ID. sessionStorage scopes it to one tab, so two
@@ -13142,6 +13208,7 @@ function _mpConnect() {
     const n = (nameInput && nameInput.value || '').trim() || 'Capitaine';
     _mp.ws.send(JSON.stringify({ type: 'hello', name: n }));
     _mpStartHeartbeat();
+    _mpStartBoatUploader();
   });
   _mp.ws.addEventListener('message', (ev) => {
     let data;
@@ -13156,6 +13223,7 @@ function _mpConnect() {
   });
   _mp.ws.addEventListener('close', () => {
     _mpStopHeartbeat();
+    _mpStopBoatUploader();
     _mpShowHint(tr('wr_disconnected'));
     _mpScheduleReconnect();
   });
@@ -13185,6 +13253,18 @@ function _mpApplyState(state) {
   _mp.phase = state.phase;
   _mp.phaseEndsAt = state.phaseEndsAt;
   _mp.seats = Array.isArray(state.seats) ? state.seats : [];
+  // Refresh who we are + where the other humans are right now.
+  _mp.myPid = _mpPid();
+  _mp.mySeatIdx = _mp.seats.findIndex((s) => s && s.kind === 'human' && s.pid === _mp.myPid);
+  const others = [];
+  for (let i = 0; i < _mp.seats.length; i++) {
+    if (i === _mp.mySeatIdx) continue;
+    const s = _mp.seats[i];
+    if (s && s.kind === 'human') {
+      others.push({ seatIdx: i, x: s.x || 0, z: s.z || 0, rot: s.rot || 0, name: s.name, color: s.color });
+    }
+  }
+  _mp.remoteBoats = others;
   _mpRenderSeats();
   _mpRenderPhase();
   // Launch the local round when the server is in PLAYING and we have

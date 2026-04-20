@@ -18,7 +18,21 @@ type Phase = "LOBBY" | "COUNTDOWN" | "PLAYING" | "RECAP";
 
 type Seat =
   | { kind: "empty" }
-  | { kind: "human"; id: string; pid: string; name: string; ready: boolean; color: string; lastSeenAt: number }
+  | {
+      kind: "human";
+      id: string;
+      pid: string;
+      name: string;
+      ready: boolean;
+      color: string;
+      lastSeenAt: number;
+      // Live boat pose — updated from client 'boat' messages at ~10 Hz,
+      // broadcast in every state snapshot so other clients can render
+      // the other captains moving around.
+      x: number;
+      z: number;
+      rot: number;
+    }
   | { kind: "bot"; name: string; color: string };
 
 // If we haven't heard from a human seat in this long, treat it as a
@@ -46,7 +60,7 @@ const QUICK_START_MS   = 30_000; // 30s grace after all humans ready
 const COUNTDOWN_MS     = 3_000;
 const PLAYING_MS       = 180_000; // 3 minutes
 const RECAP_MS         = 15_000;
-const TICK_MS          = 250;     // state-machine tick cadence
+const TICK_MS          = 100;     // state tick — drives ghost-reaper + position fan-out during PLAYING
 const MIN_HUMANS_TO_START = 2;    // solo lobby never advances: use "Play offline" on the client
 
 const BOT_NAMES = ["Coral", "Marlin", "Triton", "Dory", "Splash", "Reef"];
@@ -90,7 +104,10 @@ export default class TrashureRoom implements Party.Server {
 
   private startTicker() {
     if (this.tickTimer) return;
-    this.tickTimer = setInterval(() => this.tick(), TICK_MS);
+    this.tickTimer = setInterval(() => {
+      this.tick();
+      this.broadcastIfPlaying();
+    }, TICK_MS);
   }
   private stopTicker() {
     if (this.tickTimer) {
@@ -116,6 +133,7 @@ export default class TrashureRoom implements Party.Server {
         seat.id = conn.id;
         seat.ready = false; // don't carry over stale ready on reconnect
         seat.lastSeenAt = Date.now();
+        // keep last known x/z/rot so the boat doesn't teleport on brief drops
         this.startTicker();
         this.broadcastState();
         return;
@@ -141,7 +159,7 @@ export default class TrashureRoom implements Party.Server {
     // If we're taking over a bot, keep its color so the leaderboard
     // layout doesn't shuffle mid-round.
     const color = prev.kind === "bot" ? prev.color : COLORS[idx % COLORS.length];
-    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now() };
+    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0 };
     this.startTicker();
     this.broadcastState();
   }
@@ -157,6 +175,18 @@ export default class TrashureRoom implements Party.Server {
 
     if (data.type === "ping") {
       // Heartbeat only; no state change, no broadcast.
+      return;
+    }
+
+    if (data.type === "boat" && seat?.kind === "human") {
+      // Position updates are frequent (~10 Hz per player). Mutate the
+      // seat in place; the broadcaster runs on the next tick anyway so
+      // we don't flood clients — the state is picked up on the next
+      // periodic snapshot.
+      const x = Number(data.x), z = Number(data.z), r = Number(data.rot);
+      if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(r)) {
+        seat.x = x; seat.z = z; seat.rot = r;
+      }
       return;
     }
 
@@ -279,6 +309,14 @@ export default class TrashureRoom implements Party.Server {
         break;
     }
     this.broadcastState();
+  }
+
+  // PartyKit calls into tick() on an interval. Between phase transitions
+  // (which already broadcast), we still want to push snapshots during
+  // PLAYING so other clients see live boat positions without waiting
+  // for the next phase change. Called at the end of every tick.
+  private broadcastIfPlaying() {
+    if (this.state.phase === "PLAYING") this.broadcastState();
   }
 
   // ---- helpers ----
