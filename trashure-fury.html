@@ -9687,7 +9687,7 @@ function showGameOver() {
 
   const gameDurationMin = Math.floor(gameTime / 60);
   const gameDurationSec = Math.floor(gameTime % 60);
-  const durationStr = gameDurationMin + 'min ' + String(gameDurationSec).padStart(2, '0') + 's';
+  const durationStr = gameDurationMin + tr('go_duration_min') + ' ' + String(gameDurationSec).padStart(2, '0') + tr('go_duration_sec');
   const t = hydroTelemetry;
 
   // Most telemetry counters aren't wired into gameplay yet — rather than
@@ -9720,14 +9720,14 @@ function showGameOver() {
       '<div class="science-stat"><span class="science-stat-label">' + label +
       '</span><span class="science-stat-value">' + value + '</span></div>';
     sciStats.innerHTML =
-      row('Plastique collect\u00E9',   localPlayer.totalCollected) +
-      row('Dur\u00E9e de session',     durationStr) +
-      row('\u00C9poques IA',            epochs) +
-      row('Donn\u00E9es apprises',      dataPoints) +
-      row('Collisions IA',             collisions) +
-      row('\u00C9vasions r\u00E9ussies', evasionsSuccessful + ' / ' + evasionsTriggered) +
-      row('Obstacles \u00E9vit\u00E9s', obstaclesAvoided) +
-      row('Distance IA',                distanceKm + ' km');
+      row(tr('go_stat_plastic'),     localPlayer.totalCollected) +
+      row(tr('go_stat_duration'),    durationStr) +
+      row(tr('go_stat_epochs'),      epochs) +
+      row(tr('go_stat_data'),        dataPoints) +
+      row(tr('go_stat_collisions'),  collisions) +
+      row(tr('go_stat_evasions'),    evasionsSuccessful + ' / ' + evasionsTriggered) +
+      row(tr('go_stat_obstacles'),   obstaclesAvoided) +
+      row(tr('go_stat_distance'),    distanceKm + ' km');
   }
 
   if (sciProgress) {
@@ -9740,7 +9740,7 @@ function showGameOver() {
     ));
     sciProgress.innerHTML =
       '<div class="science-progress-label">' +
-        '<span>Confiance du mod\u00E8le</span>' +
+        '<span>' + tr('go_stat_confidence') + '</span>' +
         '<span>' + Math.round(confidence) + ' %</span>' +
       '</div>' +
       '<div class="science-progress-bar">' +
@@ -9752,30 +9752,35 @@ function showGameOver() {
     // Pick the most relevant insight based on WHAT dominated this session.
     // Each insight reads as advice the AI derived from the player's play.
     const insights = [];
+    const fmt = (key, vars) => {
+      let s = tr(key);
+      if (vars) for (const k in vars) s = s.split('{' + k + '}').join(vars[k]);
+      return s;
+    };
     if (collisions >= 3) {
-      insights.push('Renforcement appris : \u00E9viter les boat kamikazes. Le mod\u00E8le ajuste sa distance de s\u00E9curit\u00E9.');
+      insights.push(tr('go_insight_collisions'));
     }
     if (evasionRate >= 70 && evasionsTriggered >= 3) {
-      insights.push('Strat\u00E9gie d\'\u00E9vasion valid\u00E9e \u00E0 ' + evasionRate + ' %. L\'IA int\u00E8gre ce sch\u00E9ma dans son apprentissage.');
+      insights.push(fmt('go_insight_evasion_high', { X: evasionRate }));
     } else if (evasionRate < 40 && evasionsTriggered >= 3) {
-      insights.push('Taux d\'\u00E9vasion faible (' + evasionRate + ' %). Le mod\u00E8le doit anticiper plus t\u00F4t les trajectoires.');
+      insights.push(fmt('go_insight_evasion_low', { X: evasionRate }));
     }
     if (obstaclesAvoided >= 10) {
-      insights.push('Cartographie enrichie : ' + obstaclesAvoided + ' obstacles r\u00E9f\u00E9renc\u00E9s pour futurs entra\u00EEnements.');
+      insights.push(fmt('go_insight_obstacles', { N: obstaclesAvoided }));
     }
     if (minesEvaded >= 1) {
-      insights.push('Mines d\u00E9tect\u00E9es et contourn\u00E9es \u2014 signatures ajout\u00E9es \u00E0 la base de menaces.');
+      insights.push(tr('go_insight_mines'));
     }
     if (bombsEvaded >= 2) {
-      insights.push('Pr\u00E9diction de projectiles pirates am\u00E9lior\u00E9e par ' + bombsEvaded + ' observations.');
+      insights.push(fmt('go_insight_bombs', { N: bombsEvaded }));
     }
     if (localPlayer.totalCollected >= 80) {
-      insights.push('Efficacit\u00E9 humaine \u00E9lev\u00E9e : le mod\u00E8le copie votre sch\u00E9ma de collecte optimal.');
+      insights.push(tr('go_insight_collect_high'));
     } else if (localPlayer.totalCollected < 25) {
-      insights.push('Peu de donn\u00E9es de collecte. L\'IA demande une session plus longue pour g\u00E9n\u00E9raliser.');
+      insights.push(tr('go_insight_collect_low'));
     }
     if (insights.length === 0) {
-      insights.push('Session archiv\u00E9e. Chaque partie enrichit le r\u00E9seau neuronal de l\'Hydronaute.');
+      insights.push(tr('go_insight_archived'));
     }
     // Show up to 2 top insights joined with a soft separator
     sciInsight.innerHTML = insights.slice(0, 2).join(' &mdash; ');
@@ -13672,6 +13677,28 @@ const I18N_STRINGS = {
     science_subtitle: 'Donn\u00E9es g\u00E9n\u00E9r\u00E9es pour l\u2019apprentissage de l\u2019Hydronaute',
     science_scan_label: 'HYDRONAUTE // ANALYSE',
     science_scan_readout: '// Corr\u00E9lation des donn\u00E9es de mission...',
+    // Science recap stat rows
+    go_stat_plastic: 'Plastique collect\u00E9',
+    go_stat_duration: 'Dur\u00E9e de session',
+    go_stat_epochs: '\u00C9poques IA',
+    go_stat_data: 'Donn\u00E9es apprises',
+    go_stat_collisions: 'Collisions IA',
+    go_stat_evasions: '\u00C9vasions r\u00E9ussies',
+    go_stat_obstacles: 'Obstacles \u00E9vit\u00E9s',
+    go_stat_distance: 'Distance IA',
+    go_stat_confidence: 'Confiance du mod\u00E8le',
+    go_duration_min: 'min',
+    go_duration_sec: 's',
+    // Science recap insights (use {X} / {N} tokens for substitution)
+    go_insight_collisions: 'Renforcement appris : \u00E9viter les boat kamikazes. Le mod\u00E8le ajuste sa distance de s\u00E9curit\u00E9.',
+    go_insight_evasion_high: 'Strat\u00E9gie d\u2019\u00E9vasion valid\u00E9e \u00E0 {X} %. L\u2019IA int\u00E8gre ce sch\u00E9ma dans son apprentissage.',
+    go_insight_evasion_low: 'Taux d\u2019\u00E9vasion faible ({X} %). Le mod\u00E8le doit anticiper plus t\u00F4t les trajectoires.',
+    go_insight_obstacles: 'Cartographie enrichie : {N} obstacles r\u00E9f\u00E9renc\u00E9s pour futurs entra\u00EEnements.',
+    go_insight_mines: 'Mines d\u00E9tect\u00E9es et contourn\u00E9es \u2014 signatures ajout\u00E9es \u00E0 la base de menaces.',
+    go_insight_bombs: 'Pr\u00E9diction de projectiles pirates am\u00E9lior\u00E9e par {N} observations.',
+    go_insight_collect_high: 'Efficacit\u00E9 humaine \u00E9lev\u00E9e : le mod\u00E8le copie votre sch\u00E9ma de collecte optimal.',
+    go_insight_collect_low: 'Peu de donn\u00E9es de collecte. L\u2019IA demande une session plus longue pour g\u00E9n\u00E9raliser.',
+    go_insight_archived: 'Session archiv\u00E9e. Chaque partie enrichit le r\u00E9seau neuronal de l\u2019Hydronaute.',
     // Loading
     loading_status: 'Chargement des mod\u00E8les...',
     loading_loaded_suffix: ' charg\u00E9',
@@ -13749,6 +13776,26 @@ const I18N_STRINGS = {
     science_subtitle: 'Data generated for the Hydronaute\u2019s learning',
     science_scan_label: 'HYDRONAUTE // ANALYSIS',
     science_scan_readout: '// Correlating mission data...',
+    go_stat_plastic: 'Plastic collected',
+    go_stat_duration: 'Session duration',
+    go_stat_epochs: 'AI epochs',
+    go_stat_data: 'Data learned',
+    go_stat_collisions: 'AI collisions',
+    go_stat_evasions: 'Evasions succeeded',
+    go_stat_obstacles: 'Obstacles avoided',
+    go_stat_distance: 'AI distance',
+    go_stat_confidence: 'Model confidence',
+    go_duration_min: 'min',
+    go_duration_sec: 's',
+    go_insight_collisions: 'Reinforcement learned: avoid kamikaze boats. The model adjusts its safety margin.',
+    go_insight_evasion_high: 'Evasion strategy validated at {X}%. The AI integrates this pattern into its learning.',
+    go_insight_evasion_low: 'Low evasion rate ({X}%). The model must anticipate trajectories earlier.',
+    go_insight_obstacles: 'Map enriched: {N} obstacles referenced for future training.',
+    go_insight_mines: 'Mines detected and avoided \u2014 signatures added to the threat database.',
+    go_insight_bombs: 'Pirate projectile prediction improved by {N} observations.',
+    go_insight_collect_high: 'High human efficiency: the model copies your optimal collection pattern.',
+    go_insight_collect_low: 'Little collection data. The AI requests a longer session to generalize.',
+    go_insight_archived: 'Session archived. Every run enriches the Hydronaute\u2019s neural network.',
     // Loading
     loading_status: 'Loading models...',
     loading_loaded_suffix: ' loaded',
