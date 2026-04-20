@@ -12137,25 +12137,46 @@ function gameLoop(timestamp) {
     }
   }
 
-  // ---- MULTIPLAYER: map remote human seats onto rival-bot slots ----
-  // While connected to a live MP round, each non-self human seat on
-  // the server takes over one local rival-bot slot: we snap its pose
-  // from the server, skip its AI, and show the human's name. Bot
-  // slots (where the server has no human) keep running local AI as
-  // usual. Whale/Hydronaute are never overridden.
-  const _mpActive = !!(_mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched && _mp.remoteBoats && _mp.remoteBoats.length);
+  // ---- MULTIPLAYER: humans only, no rival AI ----
+  // Online mode has no bots: whichever local rival-bot slots don't
+  // correspond to a connected remote human are hidden and their AI
+  // is skipped. Online rounds scale naturally with 2–4 humans.
+  // Whale/Hydronaute are world entities, never affected.
+  const _mpActive = !!(_mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched);
   const _mpRemoteByBotId = new Map();
+  const _mpHiddenBotIds  = new Set();
   if (_mpActive) {
     const rivals = [];
     for (const b of bots) { if (!b.isWhale && !b.isHydro) rivals.push(b); }
-    for (let i = 0; i < _mp.remoteBoats.length && i < rivals.length; i++) {
-      _mpRemoteByBotId.set(rivals[i].id, _mp.remoteBoats[i]);
+    const remotes = _mp.remoteBoats || [];
+    for (let i = 0; i < rivals.length; i++) {
+      if (i < remotes.length) _mpRemoteByBotId.set(rivals[i].id, remotes[i]);
+      else                    _mpHiddenBotIds.add(rivals[i].id);
     }
   }
 
   // ---- BOTS ----
   for (const bot of bots) {
+    // Unused rival-bot slot during an online round → hide and skip.
+    if (_mpHiddenBotIds.has(bot.id)) {
+      const mesh = botMeshes.get(bot.id);
+      if (mesh && mesh.visible !== false) mesh.visible = false;
+      bot.health = 0; // keep internal systems from picking up this slot
+      continue;
+    }
+    // Re-show previously hidden slots if we ever leave MP (e.g. next round offline).
+    if (!_mpActive) {
+      const mesh = botMeshes.get(bot.id);
+      if (mesh && mesh.visible === false) mesh.visible = true;
+    }
     const _mpRemote = _mpRemoteByBotId.get(bot.id);
+    // If we're now driving this slot from the server, make sure the mesh
+    // is visible (it may have been hidden last frame when no human occupied it).
+    if (_mpRemote) {
+      const mesh = botMeshes.get(bot.id);
+      if (mesh && mesh.visible === false) mesh.visible = true;
+      if (bot.health <= 0) bot.health = (bot.maxHealth || MAX_HEALTH || 100);
+    }
     if (_mpRemote) {
       // Snapshot interpolation: find where this boat should be right
       // now between the last two snapshots. Render ~100 ms in the
@@ -13327,29 +13348,23 @@ function _mpOwnConnId() { return null; }
 function _mpRenderSeats() {
   if (!_mp.wrSeats) return;
   const html = _mp.seats.map((seat) => {
-    if (!seat || seat.kind === 'empty') {
-      return '<div class="wr-seat bot"><div class="wr-seat-ico">\u2014</div>' +
-             '<div class="wr-seat-name">\u2014</div>' +
-             '<div class="wr-seat-role">' + tr('wr_seat_bot') + '</div></div>';
+    if (!seat || seat.kind === 'empty' || seat.kind === 'bot') {
+      // Bots no longer exist in online mode — both empty and any
+      // stale "bot" records render as a waiting slot.
+      return '<div class="wr-seat bot">' +
+             '<div class="wr-seat-ico">\u2014</div>' +
+             '<div class="wr-seat-name">' + tr('wr_seat_open') + '</div>' +
+             '<div class="wr-seat-role">' + tr('wr_seat_waiting') + '</div></div>';
     }
-    if (seat.kind === 'human') {
-      const ready = seat.ready ? ' ready' : '';
-      const readyBadge = seat.ready
-        ? '<div class="wr-seat-role" style="color:#00e6b8">' + tr('wr_seat_ready') + '</div>'
-        : '<div class="wr-seat-role">' + tr('wr_seat_human') + '</div>';
-      return '<div class="wr-seat human' + ready + '">' +
-             '<div class="wr-seat-ico">\uD83E\uDDD1\u200D\u2708\uFE0F</div>' +
-             '<div class="wr-seat-name">' + _mpEscape(seat.name) + '</div>' +
-             readyBadge +
-             '<div class="wr-seat-color-dot" style="color:' + (seat.color || '#fff') + '"></div>' +
-             '</div>';
-    }
-    // bot
-    return '<div class="wr-seat bot">' +
-           '<div class="wr-seat-ico">\uD83E\uDD16</div>' +
+    const ready = seat.ready ? ' ready' : '';
+    const readyBadge = seat.ready
+      ? '<div class="wr-seat-role" style="color:#00e6b8">' + tr('wr_seat_ready') + '</div>'
+      : '<div class="wr-seat-role">' + tr('wr_seat_human') + '</div>';
+    return '<div class="wr-seat human' + ready + '">' +
+           '<div class="wr-seat-ico">\uD83E\uDDD1\u200D\u2708\uFE0F</div>' +
            '<div class="wr-seat-name">' + _mpEscape(seat.name) + '</div>' +
-           '<div class="wr-seat-role">' + tr('wr_seat_bot') + '</div>' +
-           '<div class="wr-seat-color-dot" style="color:' + (seat.color || '#888') + '"></div>' +
+           readyBadge +
+           '<div class="wr-seat-color-dot" style="color:' + (seat.color || '#fff') + '"></div>' +
            '</div>';
   }).join('');
   _mp.wrSeats.innerHTML = html;
@@ -14290,13 +14305,15 @@ const I18N_STRINGS = {
     wr_unready_btn: 'PAS PR\u00CAT',
     wr_solo_btn: 'Jouer en solo',
     wr_leave_btn: 'Quitter',
-    wr_hint: 'Les si\u00E8ges vides sont remplis par des bots. La manche d\u00E9marre uniquement quand <b>tous les joueurs</b> ont cliqu\u00E9 PR\u00CAT (minimum 2).',
-    wr_hint_waiting_solo: 'En attente d\u2019un autre joueur... Tu peux cliquer <b>Jouer en solo</b> pour d\u00E9marrer tout de suite contre des bots.',
+    wr_hint: 'Mode en ligne : <b>humains uniquement</b>. La manche d\u00E9marre quand <b>tous les joueurs</b> ont cliqu\u00E9 PR\u00CAT (minimum 2).',
+    wr_hint_waiting_solo: 'En attente d\u2019un autre joueur... Tu peux cliquer <b>Jouer en solo</b> pour d\u00E9marrer tout de suite contre des bots (hors ligne).',
     wr_hint_playing: 'Une manche est en cours. Tu joueras \u00E0 la prochaine.',
     wr_hint_recap: 'R\u00E9cap de la manche en cours. Prochaine manche dans un instant.',
     start_solo_link: 'Jouer hors ligne (solo)',
     wr_seat_human: 'Humain',
     wr_seat_bot: 'Bot',
+    wr_seat_open: 'Si\u00E8ge libre',
+    wr_seat_waiting: 'En attente...',
     wr_seat_ready: 'PR\u00CAT',
     wr_connecting: 'Connexion au serveur...',
     wr_disconnected: 'D\u00E9connect\u00E9. Tentative de reconnexion...',
@@ -14407,13 +14424,15 @@ const I18N_STRINGS = {
     wr_unready_btn: 'NOT READY',
     wr_solo_btn: 'Play solo',
     wr_leave_btn: 'Leave',
-    wr_hint: 'Empty seats are filled by bots. The round only starts when <b>all players</b> click READY (minimum 2).',
-    wr_hint_waiting_solo: 'Waiting for another player... You can click <b>Play solo</b> to start against bots now.',
+    wr_hint: 'Online mode: <b>humans only</b>. Round starts when <b>all players</b> click READY (minimum 2).',
+    wr_hint_waiting_solo: 'Waiting for another player... You can click <b>Play solo</b> to start against bots now (offline).',
     wr_hint_playing: 'A round is in progress. You\u2019ll join the next one.',
     wr_hint_recap: 'Round recap in progress. Next round starts shortly.',
     start_solo_link: 'Play offline (solo)',
     wr_seat_human: 'Human',
     wr_seat_bot: 'Bot',
+    wr_seat_open: 'Seat open',
+    wr_seat_waiting: 'Waiting...',
     wr_seat_ready: 'READY',
     wr_connecting: 'Connecting to server...',
     wr_disconnected: 'Disconnected. Reconnecting...',

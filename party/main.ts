@@ -63,12 +63,12 @@ const RECAP_MS         = 15_000;
 const TICK_MS          = 100;     // state tick — drives ghost-reaper + position fan-out during PLAYING
 const MIN_HUMANS_TO_START = 2;    // solo lobby never advances: use "Play offline" on the client
 
-const BOT_NAMES = ["Coral", "Marlin", "Triton", "Dory", "Splash", "Reef"];
-const COLORS    = ["#ff5a3c", "#ffd93d", "#4ade80", "#22d3ee", "#c084fc", "#fb7185"];
+const COLORS    = ["#ff5a3c", "#ffd93d", "#4ade80", "#22d3ee"];
 
-function makeBotSeats(): Seat[] {
-  const picks = [...BOT_NAMES].sort(() => Math.random() - 0.5).slice(0, 4);
-  return picks.map((name, i) => ({ kind: "bot", name, color: COLORS[i % COLORS.length] } as Seat));
+function makeEmptySeats(): Seat[] {
+  // Online multiplayer is humans-only. Unfilled slots stay visibly
+  // empty in the lobby and produce no AI boat in the round.
+  return [{ kind: "empty" }, { kind: "empty" }, { kind: "empty" }, { kind: "empty" }];
 }
 
 function initialState(): RoomState {
@@ -76,7 +76,7 @@ function initialState(): RoomState {
     phase: "LOBBY",
     // 0 = no countdown armed. Server arms it only when all humans are ready.
     phaseEndsAt: 0,
-    seats: makeBotSeats(),
+    seats: makeEmptySeats(),
   };
 }
 
@@ -145,20 +145,16 @@ export default class TrashureRoom implements Party.Server {
     // Saves late joiners from landing in a lobby full of zombies.
     this.reapGhostSeats();
 
-    // Mid-round joining is allowed: the player takes over a bot seat
-    // and inherits whatever the bot had (position, score — once those
-    // move server-side in a later milestone). True spectator is only
-    // used when all 4 seats are already human.
-    const idx = this.state.seats.findIndex((s) => s.kind === "bot" || s.kind === "empty");
+    // Mid-round joining is allowed: the player takes the first free
+    // seat. Spectator only when all 4 seats are already human.
+    const idx = this.state.seats.findIndex((s) => s.kind === "empty");
     if (idx === -1) {
       conn.send(JSON.stringify({ type: "spectator" }));
       conn.send(JSON.stringify({ type: "state", state: this.state }));
       return;
     }
-    const prev = this.state.seats[idx];
-    // If we're taking over a bot, keep its color so the leaderboard
-    // layout doesn't shuffle mid-round.
-    const color = prev.kind === "bot" ? prev.color : COLORS[idx % COLORS.length];
+    // Color is stable per seat index so the lobby grid doesn't reshuffle.
+    const color = COLORS[idx % COLORS.length];
     this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0 };
     this.startTicker();
     this.broadcastState();
@@ -219,8 +215,8 @@ export default class TrashureRoom implements Party.Server {
       (s) => s.kind === "human" && s.id === conn.id
     );
     if (idx !== -1) {
-      const prev = this.state.seats[idx] as Extract<Seat, { kind: "human" }>;
-      this.state.seats[idx] = { kind: "bot", name: prev.name, color: prev.color };
+      // Humans-only mode: vacated seat goes back to empty, not bot.
+      this.state.seats[idx] = { kind: "empty" };
       // If the drop breaks the all-ready condition, disarm the quick
       // start so the remaining players aren't catapulted out of lobby.
       if (this.state.phase === "LOBBY" && !allHumansReady(this.state)) {
@@ -245,7 +241,7 @@ export default class TrashureRoom implements Party.Server {
     for (let i = 0; i < this.state.seats.length; i++) {
       const s = this.state.seats[i];
       if (s.kind === "human" && now - s.lastSeenAt > GHOST_TIMEOUT_MS) {
-        this.state.seats[i] = { kind: "bot", name: s.name, color: s.color };
+        this.state.seats[i] = { kind: "empty" };
         changed = true;
       }
     }
