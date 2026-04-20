@@ -141,6 +141,16 @@
       pointer-events: none;
       animation: bgFloat 18s ease-in-out infinite;
     }
+    /* Subtle full-screen code rain behind the start panel. The ocean
+       gradient underneath still shows through — the rain is texture. */
+    #code-rain {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      opacity: 0.42;
+      z-index: 0;
+    }
+    .start-panel { z-index: 1; position: relative; }
     @keyframes bgFloat {
       0%, 100% { transform: translate(0, 0); }
       50%      { transform: translate(20px, -15px); }
@@ -326,6 +336,102 @@
       box-shadow: 0 8px 28px rgba(100, 200, 255, 0.35);
     }
     #tutorial-btn:active { transform: translateY(-1px); }
+
+    /* ---- SCIENCE PROTOCOL (small link-style under subtitle) ---- */
+    #protocol-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin: 10px auto 0;
+      padding: 5px 14px;
+      font-family: var(--font-heading); font-size: 0.68rem;
+      letter-spacing: 0.24em; font-weight: 600;
+      color: rgba(170, 210, 235, 0.85);
+      background: transparent;
+      border: 1px solid rgba(170, 210, 235, 0.35);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    #protocol-btn .protocol-ico {
+      width: 14px; height: 14px; flex: 0 0 auto;
+      color: rgba(255, 190, 58, 0.9);
+    }
+    #protocol-btn:hover {
+      color: #fff;
+      border-color: rgba(200, 230, 250, 0.7);
+      background: rgba(180, 215, 240, 0.05);
+    }
+    #protocol-btn:hover .protocol-ico { color: #ffd080; }
+
+    #protocol-overlay {
+      /* Must sit ABOVE the start screen (z=100) or you can't see it. */
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(4, 8, 14, 0.82); backdrop-filter: blur(8px);
+      align-items: center; justify-content: center; padding: 24px;
+    }
+    #protocol-overlay.active { display: flex; }
+    .protocol-card {
+      position: relative; max-width: 560px; width: 100%;
+      padding: 28px 30px 26px;
+      border-radius: 14px;
+      border: 1px solid rgba(180, 210, 230, 0.25);
+      background: rgba(8, 16, 26, 0.92);
+      font-family: var(--font-body);
+      color: rgba(225, 238, 248, 0.94);
+    }
+    .protocol-close {
+      position: absolute; top: 10px; right: 14px;
+      width: 32px; height: 32px; line-height: 28px;
+      background: transparent; border: none; color: rgba(220, 235, 245, 0.55);
+      font-size: 1.6rem; cursor: pointer; border-radius: 6px;
+    }
+    .protocol-close:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
+    .protocol-eyebrow {
+      font-family: var(--font-heading);
+      font-size: 0.68rem; letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(120, 200, 240, 0.9);
+      margin-bottom: 6px;
+    }
+    .protocol-title {
+      font-family: var(--font-heading);
+      font-size: 1.4rem; font-weight: 700;
+      color: #fff; letter-spacing: 0.04em;
+      margin: 0 0 10px 0;
+    }
+    .protocol-refs {
+      display: flex; flex-wrap: wrap; gap: 10px;
+      font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+      font-size: 0.7rem; color: rgba(150, 180, 200, 0.75);
+      margin-bottom: 14px;
+    }
+    .protocol-refs span {
+      padding: 2px 8px; border-radius: 4px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .protocol-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 12px; margin-bottom: 18px;
+      border-radius: 999px;
+      background: rgba(255, 190, 58, 0.1);
+      border: 1px solid rgba(255, 190, 58, 0.35);
+      font-size: 0.78rem; letter-spacing: 0.03em;
+      color: #ffd080;
+    }
+    .protocol-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ffbe3a;
+      box-shadow: 0 0 0 0 rgba(255, 190, 58, 0.6);
+      animation: protocolPulse 1.6s ease-in-out infinite;
+    }
+    @keyframes protocolPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 190, 58, 0.55); }
+      50%      { box-shadow: 0 0 0 7px rgba(255, 190, 58, 0);   }
+    }
+    .protocol-body {
+      font-size: 0.92rem; line-height: 1.55;
+      color: rgba(215, 230, 245, 0.88);
+    }
 
     /* ---- TUTORIAL OVERLAY ---- */
     #tutorial-overlay {
@@ -1383,6 +1489,7 @@
 <canvas id="start-boat-left" class="start-boat-canvas start-boat-left"></canvas>
 <canvas id="start-boat-right" class="start-boat-canvas start-boat-right"></canvas>
 <div id="start-screen">
+  <canvas id="code-rain" aria-hidden="true"></canvas>
   <div class="lang-toggle" id="lang-toggle">
     <button class="lang-btn active" data-lang="fr">FR</button>
     <button class="lang-btn" data-lang="en">EN</button>
@@ -1390,26 +1497,9 @@
   <div class="start-panel glass-panel">
     <img class="start-logo-img" src="./public/assets/hydronaute-white.svg" alt="L'Hydronaute par Biutopic">
     <div class="start-title">TRASHURE ISLAND</div>
-    <div class="start-subtitle" data-i18n="subtitle">affronte les vagues &middot; collecte les d&eacute;chets &middot; sauve l'oc&eacute;an</div>
+    <div class="start-subtitle" data-i18n="subtitle">un jeu qui entra&icirc;ne un mod&egrave;le d&rsquo;&eacute;vitement d&rsquo;obstacles</div>
+    <button id="protocol-btn" onclick="if(window._openProtocol)window._openProtocol()"><svg class="protocol-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="8"  x2="16" y2="8"  stroke="currentColor" stroke-width="1.4"/><line x1="8" y1="12" x2="16" y2="12" stroke="currentColor" stroke-width="1.4"/><line x1="8" y1="16" x2="13" y2="16" stroke="currentColor" stroke-width="1.4"/></svg><span data-i18n="protocol_btn">NOTRE PROTOCOLE</span></button>
     <div class="start-divider"></div>
-
-    <div class="start-info-grid">
-      <div class="start-info-card">
-        <div class="start-info-icon">&#127919;</div>
-        <div class="start-info-title" data-i18n="obj_title">Objectif</div>
-        <div class="start-info-body" data-i18n="obj_body">Collecte le plastique qui flotte. Chaque morceau compte pour l&rsquo;oc&eacute;an.</div>
-      </div>
-      <div class="start-info-card">
-        <div class="start-info-icon">&#127918;</div>
-        <div class="start-info-title" data-i18n="ctrl_title">Contr&ocirc;les</div>
-        <div class="start-info-body" data-i18n="ctrl_body"><b>ZQSD</b> naviguer &middot; <b>Espace</b> boost &middot; <b>Shift</b> boule de feu (d&egrave;s 50 plastiques)</div>
-      </div>
-      <div class="start-info-card">
-        <div class="start-info-icon">&#128161;</div>
-        <div class="start-info-title" data-i18n="tip_title">Astuces</div>
-        <div class="start-info-body" data-i18n="tip_body">Le plastique <b style="color:#ff88bb">rose</b> te soigne. &Eacute;vite les pirates et la <b style="color:#4488cc">baleine</b> !</div>
-      </div>
-    </div>
 
     <div class="start-label" data-i18n="name_label">Nom du Capitaine</div>
     <input type="text" id="name-input" placeholder="Entre ton nom..." maxlength="16" value="Capitaine" data-i18n-placeholder="name_placeholder">
@@ -1417,6 +1507,25 @@
       <button id="start-btn" onclick="if(window._beginGame)window._beginGame()" data-i18n="start_btn">LARGUER LES AMARRES</button>
       <button id="tutorial-btn" onclick="if(window._openTutorial)window._openTutorial()" data-i18n="tuto_btn">TUTORIEL</button>
     </div>
+  </div>
+</div>
+
+<!-- ======== SCIENCE PROTOCOL OVERLAY ======== -->
+<div id="protocol-overlay">
+  <div class="protocol-card glass-panel" role="dialog" aria-modal="true" aria-labelledby="protocol-title-el">
+    <button class="protocol-close" id="protocol-close" aria-label="Close">&times;</button>
+    <div class="protocol-eyebrow" data-i18n="protocol_sub">Programme de recherche &mdash; Hydronaute IA</div>
+    <div class="protocol-title" id="protocol-title-el" data-i18n="protocol_title">Protocole Scientifique</div>
+    <div class="protocol-refs">
+      <span>REF &middot; HDN/R8K/2026-01</span>
+      <span>IRB &middot; pending</span>
+      <span>v0.1 DRAFT</span>
+    </div>
+    <div class="protocol-status">
+      <span class="protocol-dot"></span>
+      <span data-i18n="protocol_status">En cours de r&eacute;daction</span>
+    </div>
+    <div class="protocol-body" data-i18n="protocol_body">Ce jeu fait partie d&rsquo;un protocole de collecte de donn&eacute;es comportementales pour l&rsquo;entra&icirc;nement d&rsquo;un mod&egrave;le embarqu&eacute; d&rsquo;assistance &agrave; la navigation.</div>
   </div>
 </div>
 
@@ -2048,18 +2157,52 @@ sfxUrls.heal = buildWav((t, d) => {
 
 // Boost: woosh — filtered noise sweeping up
 sfxUrls.boost = buildWav((t, d) => {
-  const env = Math.min(1, t / 0.05) * Math.max(0, 1 - t / d);
-  // Band-passed noise: sum of several sine waves with random-ish phases for texture
-  const cutoff = 300 + 2000 * (t / d); // sweep up
+  const env = Math.min(1, t / 0.06) * Math.max(0, 1 - t / d);
+  // Deep band-passed whoosh: low fundamentals sweeping UP but capped low
+  const cutoff = 90 + 420 * (t / d); // 90 → 510 Hz
   let s = 0;
-  for (let h = 1; h <= 12; h++) {
-    const f = cutoff * (0.5 + h * 0.15);
+  for (let h = 1; h <= 10; h++) {
+    const f = cutoff * (0.4 + h * 0.12);
     s += Math.sin(2 * Math.PI * f * t + h * 7.3) / h;
   }
-  // Add some actual noise texture
-  const noise = (Math.sin(t * 34567.89) * Math.cos(t * 12345.67) + Math.sin(t * 78901.23)) / 3;
-  return (s * 0.15 + noise * 0.3) * env;
-}, 0.4);
+  // Sub-bass tail for body
+  const sub = Math.sin(2 * Math.PI * (55 + 35 * (t / d)) * t) * 0.35;
+  // Rushing-air noise (darker — low-passed by attenuating high freq sines)
+  const noise = (Math.sin(t * 12457.89) * Math.cos(t * 5341.67) + Math.sin(t * 23901.23)) / 3;
+  return (s * 0.18 + sub * 0.40 + noise * 0.22) * env;
+}, 0.55);
+
+// Fireball charge — deep rumbling whoosh that swells as SHIFT is held
+sfxUrls.fireCharge = buildWav((t, d) => {
+  const env = Math.min(1, t / 0.1) * Math.max(0, 1 - t / d);
+  // Low pitch sweep 70Hz → 240Hz — deep, chest-y
+  const base = 70 + 170 * (t / d);
+  let s = 0;
+  for (let h = 1; h <= 5; h++) {
+    s += Math.sin(2 * Math.PI * base * h * t + h * 2.1) / (h * 1.5);
+  }
+  // Sub-bass pulse for weight
+  const sub = Math.sin(2 * Math.PI * (45 + 20 * (t / d)) * t) * 0.40;
+  // Darker airy noise — low-passed-ish
+  const noise = (Math.sin(t * 8237.89) + Math.cos(t * 4103.11)) * 0.5;
+  const swell = Math.pow(t / d, 1.4);
+  return (s * 0.14 + sub * 0.35 + noise * 0.18) * env * swell;
+}, 0.65);
+
+// Fireball hit — deep whoosh + heavy boom tail
+sfxUrls.fireHit = buildWav((t, d) => {
+  const env = Math.exp(-t * 6);
+  // Deep rushing whoosh, downward sweep 400 → 55 Hz
+  const sweep = 400 - 345 * Math.min(1, t / 0.14);
+  const whoosh = Math.sin(2 * Math.PI * sweep * t) * 0.40;
+  // Sub-bass body that lingers
+  const sub = Math.sin(2 * Math.PI * 45 * t) * Math.exp(-t * 4.5) * 0.55;
+  // Low thud for the initial impact
+  const thud = Math.sin(2 * Math.PI * 80 * t) * Math.exp(-t * 11) * 0.45;
+  // Dark crunch — low-pass the noise by mixing slower modulators
+  const crunch = (Math.sin(t * 14731.13) + Math.cos(t * 7519.71)) * 0.5 * Math.exp(-t * 16) * 0.5;
+  return (whoosh + sub + thud + crunch) * env;
+}, 0.55);
 
 // Crash: subtle soft bump
 sfxUrls.crash = buildWav((t, d) => {
@@ -2776,10 +2919,12 @@ function updateMotorLoop(dt, engineRunning, accelerating, boosting) {
   // cranking) the loop goes silent — NO putt-putt audible, because the
   // combustion hasn't stabilized. The loop still updates its rate so when
   // the engine does catch there's no jarring playbackRate jump.
+  // Boost = the moteur rugit. Significantly louder and more aggressive
+  // pitch than cruise — the turbo is burning plastic, let it roar.
   const targetVol = !engineRunning ? 0
-                  : accelerating ? (boosting ? 0.28 : 0.14) : 0.03;
+                  : accelerating ? (boosting ? 0.48 : 0.14) : 0.03;
   const targetRate = !engineRunning ? 0.35
-                   : accelerating ? (boosting ? 1.50 : 0.90) : 0.35;
+                   : accelerating ? (boosting ? 1.80 : 0.90) : 0.35;
   _motorVol  += (targetVol  - _motorVol)  * Math.min(1, dt * 3.5);
   _motorRate += (targetRate - _motorRate) * Math.min(1, dt * 3.0);
   // Integrate motor "phase" so we can sync the boat's visual vibration to
@@ -2919,6 +3064,12 @@ const sfx = {
   },
   heal()       { playSfx(sfxUrls.heal, 0.6); },
   boost()      { playSfx(sfxUrls.boost, 0.7); },
+  fireCharge() { playSfx(sfxUrls.fireCharge, 0.55); },
+  fireHit(x, z) {
+    if (x !== undefined && z !== undefined) playSfxSpatial(sfxUrls.fireHit, 0.5, x, z);
+    else playSfx(sfxUrls.fireHit, 0.45);
+    duckMusic(0.25, 0.35);
+  },
   death()      { playSfx(sfxUrls.death, 0.6); duckMusic(0.6, 0.20); },
   upgrade()    { playSfx(sfxUrls.upgrade, 0.7); },
   levelUp()    { playSfx(sfxUrls.levelUp, 0.6); duckMusic(0.4, 0.45); },
@@ -4120,7 +4271,19 @@ function computeAggressiveInput(bot, dt) {
 
     // Always look for someone to attack when we have boost
     if (bot.boostEnergy > 0.25) {
-      const allTargets = [localPlayer, ...bots].filter(p => p.id !== bot.id && !p.isWhale && p.health > 0);
+      // Mercy mode: if the local player is dead-last and clearly
+      // struggling, bots mostly leave them alone. Good players still
+      // get chased normally.
+      const isStruggling = (typeof _playerRank === 'function')
+        && _totalRacers() >= 3
+        && _playerRank() === _totalRacers()
+        && gameTime > 25;
+      const peaceTowardLocal = isStruggling && Math.random() < 0.85;
+      const allTargets = [localPlayer, ...bots].filter(p => {
+        if (p.id === bot.id || p.isWhale || p.health <= 0) return false;
+        if (peaceTowardLocal && p === localPlayer) return false;
+        return true;
+      });
       // Crown holder is high priority — target them from further away and more often
       const crownHolder = crownTargetId ? allTargets.find(p => p.id === crownTargetId) : null;
       let nearestEnemy = null, ned = Infinity;
@@ -4139,7 +4302,10 @@ function computeAggressiveInput(bot, dt) {
           if (d < ned && d < 1600) { ned = d; nearestEnemy = p; } // within 40 units
         }
       }
-      if (nearestEnemy && Math.random() < 0.6) { // 60% chance to attack
+      // Attack chance — slightly lower when the player is last, to
+      // give them breathing room overall.
+      const attackProb = isStruggling ? 0.45 : 0.6;
+      if (nearestEnemy && Math.random() < attackProb) {
         brain.mode = 'attack';
         brain.attackTargetId = nearestEnemy.id;
       } else {
@@ -5006,7 +5172,10 @@ function updateFireballs(dt, now) {
       if (hit) {
         spawnFireballExplosion(fb.x, fb.z, fb.charge);
         const dFB = (fb.x - localPlayer.x) ** 2 + (fb.z - localPlayer.z) ** 2;
-        if (dFB < 60 * 60) sfx.bomb(fb.x, fb.z);
+        if (dFB < 60 * 60) {
+          sfx.bomb(fb.x, fb.z);
+          sfx.fireHit(fb.x, fb.z); // layered whoosh on top of the explosion
+        }
       }
       if (mesh) scene.remove(mesh);
       fireballMeshes.delete(fb.id);
@@ -7685,7 +7854,16 @@ const keyMap = {
 
 window.addEventListener('keydown', (e) => {
   const act = keyMap[e.code];
-  if (act) { input[act] = true; e.preventDefault(); }
+  if (act) {
+    const wasOn = input[act];
+    input[act] = true;
+    // Play the whoosh the instant the player engages turbo, but only
+    // if they actually have energy to burn (no sound for a dead boost).
+    if (act === 'boost' && !wasOn && localPlayer && localPlayer.boostEnergy > 0.05) {
+      try { sfx.boost(); } catch (err) {}
+    }
+    e.preventDefault();
+  }
 
   // Fire charge (Shift) — locked until the player has collected
   // FIREBALL_UNLOCK_COST plastic cumulatively.
@@ -7700,6 +7878,7 @@ window.addEventListener('keydown', (e) => {
     fireCharging = true;
     fireChargeStart = performance.now() / 1000;
     input.fire = true;
+    try { sfx.fireCharge(); } catch (err) {}
     e.preventDefault();
   }
 
@@ -12506,6 +12685,165 @@ function prevTutoStep() {
 
 window._openTutorial = openTutorial;
 
+// --- Science Protocol modal ---
+function openProtocol() {
+  const ov = document.getElementById('protocol-overlay');
+  if (!ov) return;
+  ov.classList.add('active');
+}
+function closeProtocol() {
+  const ov = document.getElementById('protocol-overlay');
+  if (!ov) return;
+  ov.classList.remove('active');
+}
+window._openProtocol = openProtocol;
+
+// ---- "AI training" terminal log behind the start menu ----
+// A full-screen terminal of pseudo-ML log lines. New lines type in at
+// the bottom; older lines scroll up and fade out. No columns, no
+// matrix rain — just a soft stream of code/metrics across the whole
+// screen, layered behind the panel via CSS opacity.
+(function _initCodeRain() {
+  const canvas = document.getElementById('code-rain');
+  const screen = document.getElementById('start-screen');
+  if (!canvas || !screen) return;
+  const ctx = canvas.getContext('2d');
+  const LOGS = [
+    '> load   dataset.obstacle_avoidance_v3',
+    '> detect obstacle=whale   dist=18.2m   class=large',
+    '> detect obstacle=pirate  dist=22.1m   class=hostile',
+    '> detect obstacle=mine    dist=9.4m    class=static',
+    '> detect obstacle=island  bearing=24\u00B0  dist=12.7m',
+    '> plan   avoid(whale)     detour=+6.3m  safe=true',
+    '> plan   evade(pirate)    burst=boost   t=1.4s',
+    '> plan   skirt(island)    margin=3.0m',
+    '> reward safe_pass(whale)  +1.0',
+    '> reward near_miss(mine)   -0.4',
+    '> reward collision         -5.0',
+    '> sample trajectory  captain_local  pts=142',
+    '> policy  avoid > evade > collect',
+    '> step   1024 / 4096   loss=0.094',
+    '+ batch 128  avoidance_acc=0.87  \u2713',
+    '+ batch 256  avoidance_acc=0.89  \u2713',
+    '+ epoch checkpoint saved',
+    '> infer  next_heading  conf=0.88',
+    '> calibrate obstacle_threat_std=0.31',
+    '> snapshot  avoidance_v0.7.onnx',
+    '> sim    wave_height=0.7m  drag=0.12',
+    '> sync   telemetry -> hydronaute/r8000',
+    '>    ready.  waiting for captain input...',
+  ];
+  const FONT = '500 13px ui-monospace, "SFMono-Regular", Menlo, monospace';
+  const LINE_H = 20;
+  const PAD_X = 28;
+
+  // Lines stream: each item { text, x, y, finished, shown, speedCps, color }.
+  const lines = [];
+  let typing = null;      // the currently appearing line
+  let nextLineIn = 0.2;   // seconds until we start the next line
+  let lastT = 0;
+  const FPS = 30;
+
+  function pickLine() { return LOGS[(Math.random() * LOGS.length) | 0]; }
+
+  function startLine(w, h) {
+    // New line starts at the bottom edge of the screen, slight x jitter.
+    const text = pickLine();
+    const isOk = text.startsWith('+');
+    typing = {
+      text,
+      x: PAD_X + Math.random() * Math.min(40, w * 0.05),
+      y: h - 40,
+      shown: 0,
+      speedCps: 55 + Math.random() * 45,
+      isOk,
+    };
+  }
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width  = canvas.offsetWidth  * dpr;
+    canvas.height = canvas.offsetHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function draw(now) {
+    requestAnimationFrame(draw);
+    if (screen.style.display === 'none' || getComputedStyle(screen).display === 'none') return;
+    if (now - lastT < 1000 / FPS) return;
+    const dt = lastT === 0 ? 1 / FPS : (now - lastT) / 1000;
+    lastT = now;
+    const w = canvas.offsetWidth, h = canvas.offsetHeight;
+    // Clear fully — ocean gradient shows between lines.
+    ctx.clearRect(0, 0, w, h);
+    ctx.font = FONT;
+
+    // Scroll everything upward slowly.
+    const scrollSpeed = 24; // px/sec
+    for (const L of lines) L.y -= scrollSpeed * dt;
+    if (typing) typing.y -= scrollSpeed * dt;
+
+    // Advance the currently-typing line.
+    if (!typing) {
+      nextLineIn -= dt;
+      if (nextLineIn <= 0) { startLine(w, h); nextLineIn = 0.25 + Math.random() * 0.7; }
+    } else {
+      typing.shown += typing.speedCps * dt;
+      if (typing.shown >= typing.text.length) {
+        typing.shown = typing.text.length;
+        lines.push({ text: typing.text, x: typing.x, y: typing.y, isOk: typing.isOk });
+        typing = null;
+      }
+    }
+
+    // Cull off-screen lines.
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].y < -LINE_H) lines.splice(i, 1);
+    }
+
+    // Draw finished lines — fade with height so older (higher) lines are dimmer.
+    for (const L of lines) {
+      const t = 1 - Math.max(0, Math.min(1, L.y / h));   // 0 at bottom, 1 at top
+      const alpha = Math.max(0.08, 0.8 * (1 - t * 0.9));
+      ctx.fillStyle = L.isOk
+        ? 'rgba(120, 230, 160, ' + alpha.toFixed(3) + ')'
+        : 'rgba(160, 220, 235, ' + alpha.toFixed(3) + ')';
+      ctx.fillText(L.text, L.x, L.y);
+    }
+
+    // Draw the typing line at the bottom with a blinking cursor.
+    if (typing) {
+      const sub = typing.text.slice(0, Math.floor(typing.shown));
+      ctx.fillStyle = 'rgba(220, 245, 255, 0.95)';
+      ctx.fillText(sub, typing.x, typing.y);
+      if (Math.floor(now / 500) % 2 === 0) {
+        const cursorX = typing.x + ctx.measureText(sub).width + 2;
+        ctx.fillStyle = 'rgba(0, 220, 255, 0.9)';
+        ctx.fillRect(cursorX, typing.y - 12, 7, 14);
+      }
+    }
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+  // Start screen may be display:none at init — resize when it flips visible.
+  try {
+    const ro = new ResizeObserver(() => { if (canvas.offsetWidth > 0) resize(); });
+    ro.observe(canvas);
+  } catch (e) { /* ResizeObserver unsupported */ }
+  requestAnimationFrame(draw);
+})();
+(function _bindProtocolControls() {
+  const ov = document.getElementById('protocol-overlay');
+  const closeBtn = document.getElementById('protocol-close');
+  if (!ov || !closeBtn) return;
+  closeBtn.addEventListener('click', closeProtocol);
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeProtocol(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && ov.classList.contains('active')) { e.preventDefault(); closeProtocol(); }
+  });
+})();
+
 // Bind the controls once the DOM is ready (same script runs after the
 // elements are in the DOM already — defer makes sure anyway).
 (function _bindTutorialControls() {
@@ -12826,7 +13164,7 @@ function _renderStartBoatScenes(tSec) {
 // Persisted to localStorage so kiosk users don't have to re-pick each time.
 const I18N_STRINGS = {
   fr: {
-    subtitle: 'affronte les vagues &middot; collecte les d\u00E9chets &middot; sauve l\'oc\u00E9an',
+    subtitle: 'un jeu qui entra\u00EEne un mod\u00E8le d\u2019\u00E9vitement d\u2019obstacles',
     obj_title: 'Objectif',
     obj_body: 'Collecte le plastique qui flotte. Chaque morceau compte pour l\u2019oc\u00E9an.',
     ctrl_title: 'Contr\u00F4les',
@@ -12837,10 +13175,16 @@ const I18N_STRINGS = {
     name_placeholder: 'Entre ton nom...',
     start_btn: 'LARGUER LES AMARRES',
     tuto_btn: 'TUTORIEL',
+    protocol_btn: 'NOTRE PROTOCOLE',
+    protocol_title: 'Protocole Scientifique',
+    protocol_sub: 'Entra\u00EEnement \u00E9vitement d\u2019obstacles &mdash; Hydronaute',
+    protocol_status: 'En cours de r\u00E9daction',
+    protocol_body: 'Ce jeu est un terrain d\u2019entra\u00EEnement pour un mod\u00E8le d\u2019<b>\u00E9vitement d\u2019obstacles</b> destin\u00E9 aux vrais bateaux retrofitt\u00E9s. Chaque manœuvre du joueur &mdash; contournement d\u2019\u00EEle, esquive de baleine, distance de s\u00E9curit\u00E9 face aux pirates, r\u00E9action aux mines &mdash; est enregistr\u00E9e comme \u00E9chantillon d\u2019une politique de navigation s\u00FBre. Ces trajectoires alimentent un dataset qui sert \u00E0 calibrer la logique d\u2019\u00E9vitement embarqu\u00E9e. Le protocole complet (m\u00E9thodologie, consentement, traitement des donn\u00E9es, comit\u00E9 \u00E9thique) sera publi\u00E9 ici prochainement.',
+    protocol_close: 'Fermer',
     hero_caption: 'D\u00E9velopp\u00E9 par Biutopic',
   },
   en: {
-    subtitle: 'ride the waves &middot; collect the trash &middot; save the ocean',
+    subtitle: 'a game that trains an obstacle-avoidance model',
     obj_title: 'Objective',
     obj_body: 'Scoop up the floating plastic. Every piece helps the ocean.',
     ctrl_title: 'Controls',
@@ -12851,6 +13195,12 @@ const I18N_STRINGS = {
     name_placeholder: 'Enter your name...',
     start_btn: 'CAST OFF',
     tuto_btn: 'TUTORIAL',
+    protocol_btn: 'OUR PROTOCOL',
+    protocol_title: 'Scientific Protocol',
+    protocol_sub: 'Obstacle-avoidance training &mdash; Hydronaute',
+    protocol_status: 'Draft in progress',
+    protocol_body: 'This game is a training ground for an <b>obstacle-avoidance</b> model destined for real retrofitted vessels. Every manoeuvre &mdash; skirting islands, dodging the whale, keeping distance from pirates, reacting to mines &mdash; is logged as a sample of a safe navigation policy. These trajectories feed a dataset used to calibrate the onboard avoidance logic. The full protocol (methodology, consent, data handling, ethics board) will be published here soon.',
+    protocol_close: 'Close',
     hero_caption: 'Developed by Biutopic',
   },
 };
