@@ -8036,6 +8036,13 @@ function updateEntityLabels() {
       if (lbl) lbl.wrapper.style.display = 'none';
       continue;
     }
+    // Online mode: suppressed rival-bot slots have no visible boat,
+    // so hide their name label too.
+    if (b.mpSuppressed) {
+      const lbl = entityLabels.get(b.id);
+      if (lbl && lbl._lastDisplay !== 'none') { lbl.wrapper.style.display = 'none'; lbl._lastDisplay = 'none'; }
+      continue;
+    }
     const prefix = crownTargetId === b.id ? crownPrefix : '';
     const bName = prefix + b.name;
     const isHydro = (b.id === 'bot_0');
