@@ -865,6 +865,15 @@
       font-family: var(--font-heading);
       text-shadow: 0 0 8px rgba(0,255,200,0.4);
     }
+    /* Finished-session row: dimmed + FIN tag so the score reads as a
+       historical "beat me" mark, distinct from live competitors. */
+    .lb-row.ended { opacity: 0.55; }
+    .lb-row.ended .lb-score { color: #8aa0b8; text-shadow: none; }
+    .lb-fin {
+      display: inline-block; margin-left: 6px; padding: 1px 6px;
+      font-family: var(--font-heading); font-size: 0.55rem; letter-spacing: 1px;
+      color: #0b1a2a; background: #8aa0b8; border-radius: 4px; vertical-align: middle;
+    }
 
     /* ---- CONTROLS HINT ---- */
     #controls-hint {
@@ -3768,6 +3777,20 @@ function checkGarbageCollection(player, upgrades) {
       if (pointInOBB(g.x, g.z, obbMp, marginMp)) {
         g._claimed = true; // local suppression so we don't spam picks on the same piece
         try { _mp.ws.send(JSON.stringify({ type: 'pick', id: g.serverId | 0 })); } catch (e) {}
+        // --- Optimistic local heal + boost ---
+        // The server does the scoring and broadcasts an authoritative
+        // `g_pick` echo we trust for HP (data.h). But the boat-pose
+        // worker uploads `localPlayer.health` at 10 Hz regardless, so
+        // without a local pre-heal a stale h value can clobber the
+        // server's +HP the instant after it lands. Apply the heal
+        // locally first — the echo then just confirms the same value.
+        // Boost energy has no server echo at all, so it MUST be
+        // applied here.
+        const basePts = g.points || 1;
+        player.boostEnergy = Math.min(1, player.boostEnergy + BOOST_PER_PICKUP * basePts);
+        if (g.isHeal) {
+          player.health = Math.min(MAX_HEALTH, player.health + HP_PER_PINK_PICKUP);
+        }
       }
     }
     return;
@@ -8376,25 +8399,30 @@ const _lbEntries = [];
 let _lbLastHash = '';
 function updateLeaderboard() {
   _lbEntries.length = 0;
-  _lbEntries.push({ name: localPlayer.name, score: localPlayer.totalCollected, color: localPlayer.color, isLocal: true });
   const _mpActive = !!(_mp && _mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched);
-  if (_mpActive) {
-    // Online: only the first N rival-bot slots count, where N is the
-    // number of non-self humans currently seated. Those slots are the
-    // ones driven by remote humans; the rest are hidden and shouldn't
-    // appear anywhere in the UI.
-    const rivals = [];
-    for (const b of bots) { if (!b.isWhale && !b.isHydro) rivals.push(b); }
-    const remoteCount = (_mp.remoteBoats || []).length;
-    for (let i = 0; i < remoteCount && i < rivals.length; i++) {
-      const b = rivals[i];
-      _lbEntries.push({ name: b.name, score: b.totalCollected, color: b.color, isLocal: false });
+  if (_mpActive && Array.isArray(_mp.entries) && _mp.entries.length) {
+    // Cohort leaderboard: use the entries stream instead of `bots`.
+    // Shows alive rivals + any frozen entry whose session overlapped
+    // with ours so the "beat this score" mark survives its owner
+    // disconnecting or finishing early.
+    const mineId = _mp.myEntryId | 0;
+    for (const e of _mp.entries) {
+      const ended = e.endedAt != null;
+      _lbEntries.push({
+        name:   e.name || 'Capitaine',
+        score:  e.score | 0,
+        color:  e.color || '#ff5a3c',
+        isLocal: e.id === mineId,
+        ended,
+      });
     }
   } else {
+    // Local / pre-MP fallback: mirror the single-player leaderboard.
+    _lbEntries.push({ name: localPlayer.name, score: localPlayer.totalCollected, color: localPlayer.color, isLocal: true, ended: false });
     for (const b of bots) {
       if (b.isWhale) continue;
       if (b.isHydro) continue;
-      _lbEntries.push({ name: b.name, score: b.totalCollected, color: b.color, isLocal: false });
+      _lbEntries.push({ name: b.name, score: b.totalCollected, color: b.color, isLocal: false, ended: false });
     }
   }
   _lbEntries.sort((a, b) => b.score - a.score);
@@ -8402,7 +8430,8 @@ function updateLeaderboard() {
   // Build a compact hash — if scores/order unchanged, skip the DOM write entirely.
   let hash = '';
   for (let i = 0; i < _lbEntries.length; i++) {
-    hash += _lbEntries[i].name + ':' + _lbEntries[i].score + '|';
+    const e = _lbEntries[i];
+    hash += e.name + ':' + e.score + (e.ended ? 'F' : '') + '|';
   }
   if (hash === _lbLastHash) return;
   _lbLastHash = hash;
@@ -8410,11 +8439,12 @@ function updateLeaderboard() {
   let html = '';
   for (let i = 0; i < _lbEntries.length; i++) {
     const e = _lbEntries[i];
-    const cls = 'lb-row' + (e.isLocal ? ' me' : '');
+    const cls = 'lb-row' + (e.isLocal ? ' me' : '') + (e.ended ? ' ended' : '');
+    const finBadge = e.ended ? '<span class="lb-fin">FIN</span>' : '';
     html += '<div class="' + cls + '">'
       + '<span class="lb-rank">' + (i + 1) + '</span>'
       + '<span class="lb-dot" style="background:' + e.color + '"></span>'
-      + '<span class="lb-name">' + e.name + '</span>'
+      + '<span class="lb-name">' + e.name + finBadge + '</span>'
       + '<span class="lb-score">' + e.score + '</span>'
       + '</div>';
   }
@@ -12504,6 +12534,15 @@ function gameLoop(timestamp) {
   for (let bi = 0; bi < bots.length; bi++) _allPlayers.push(bots[bi]);
   const allPlayers = _allPlayers;
   for (const pirate of pirates) {
+    // In MP the pirate is server-driven — position, rotation, HP, dive
+    // state all come from `poses`/`p_add`/`p_dmg`/`p_kill`. Running the
+    // local AI would overwrite those with a client-computed chase path,
+    // and each browser would compute a different path → every player
+    // would see the pirate in a different spot.
+    if (pirate._mpServer) {
+      if (pirate.emerged) addBoatWake(pirate.id, pirate.x, pirate.z, pirate.vx, pirate.vz, RIPPLE_PIRATE_AMP);
+      continue;
+    }
     const res = updatePirate(pirate, allPlayers, dt * (_dda.pirateSpeedMul || 1), gameTime);
     for (const e of res.events) {
       spawnFloatingText(e.x, e.z, e.text, e.color);
@@ -13316,6 +13355,15 @@ const _mp = {
   isSpectator: false,
   selfReady: false,
   roundLaunched: false,
+  // --- Session entries (cohort leaderboard) ---
+  // One per session attempt the client has been told about. Frozen
+  // entries stay here for the lifetime of the connection so a finished
+  // player's score keeps appearing on the live leaderboard as a
+  // "beat me" mark for everyone who was playing alongside them.
+  entries: [],
+  // The entry id our *current alive* session is attached to, so
+  // pickup broadcasts (`g_pick` with eid) can find the right row.
+  myEntryId: -1,
   wrEl:    null,
   wrTitle: null,
   wrTimer: null,
@@ -13501,6 +13549,24 @@ function _mpConnect() {
       _mpApplyWhale(data.w);
     } else if (data.type === 'hydro') {
       _mpApplyHydro(data.h);
+    } else if (data.type === 'e_snap') {
+      _mp.entries = Array.isArray(data.entries) ? data.entries.slice() : [];
+    } else if (data.type === 'e_add') {
+      if (data.e && !_mp.entries.some(x => x.id === data.e.id)) _mp.entries.push(data.e);
+    } else if (data.type === 'e_end') {
+      const e = _mp.entries.find(x => x.id === (data.id | 0));
+      if (e) { e.endedAt = data.at; if (typeof data.score === 'number') e.score = data.score; }
+    } else if (data.type === 'e_upd') {
+      const e = _mp.entries.find(x => x.id === (data.id | 0));
+      if (e && typeof data.name === 'string') e.name = data.name;
+    } else if (data.type === 'session_end') {
+      // Server says our 3 min ran out — flip into game-over locally.
+      gameOver = true;
+      try { if (typeof showGameOver === 'function') showGameOver(); } catch (e) {}
+    } else if (data.type === 'rejoined') {
+      // Server ack'd our rejoin — remember our new entry id so pickups
+      // attach to the right row on everyone else's leaderboard.
+      _mp.myEntryId = data.entryId | 0;
     }
   });
   _mp.ws.addEventListener('close', () => {
@@ -13754,6 +13820,12 @@ function _mpApplyGarbagePick(data) {
     if (typeof data.s === 'number') localPlayer.totalCollected = data.s;
     if (typeof data.h === 'number') localPlayer.health = data.h;
   }
+  // Update the matching session entry so the cohort leaderboard
+  // reflects the new score without waiting for a poses broadcast.
+  if (typeof data.eid === 'number' && Array.isArray(_mp.entries)) {
+    const e = _mp.entries.find(x => x.id === (data.eid | 0));
+    if (e && typeof data.s === 'number') e.score = data.s;
+  }
 }
 function _mpApplyGarbageReset() {
   if (typeof garbage === 'undefined') return;
@@ -13768,8 +13840,9 @@ function _mpApplyGarbageReset() {
 // Scope of this increment: pirate positions + spawn/kill sync.
 // Whale / Hydronaute / mines / bombs remain local-per-client for now.
 function _mpBuildServerPirate(wire) {
-  const spawn = typeof findPirateSpawnPoint === 'function'
-    ? findPirateSpawnPoint() : { x: wire.x, z: wire.z };
+  // Server sends authoritative x/z for all clients — never sprinkle a
+  // client-local spawn point here or every browser sees the pirate in
+  // a different place.
   const pirate = {
     id: 'pirate_mp_' + wire.id,
     serverId: wire.id | 0,
@@ -13876,12 +13949,13 @@ function _mpApplyWorldPoses(world) {
       let found = null;
       for (const p of pirates) { if (p.serverId === (wire.i | 0)) { found = p; break; } }
       if (!found) { _mpBuildServerPirate({ id: wire.i, x: wire.x, z: wire.z, r: wire.r, h: wire.h, e: wire.e }); continue; }
-      // Buffer the last two snapshots so the render loop can
-      // interpolate between them. Applying raw server poses here
-      // would give a stair-step look at 10 Hz.
-      const nowMs = performance.now();
-      found._mpPrev = found._mpNext || { x: wire.x, z: wire.z, r: wire.r, t: nowMs };
-      found._mpNext = { x: wire.x, z: wire.z, r: wire.r, t: nowMs };
+      // Snap to the server pose. Our render rate (60 fps) is higher
+      // than the 10 Hz server tick, but pirates move slowly enough
+      // that the small stair-step is invisible. Snapshot interpolation
+      // can be layered in later if needed.
+      found.x = +wire.x || 0;
+      found.z = +wire.z || 0;
+      found.rotation = +wire.r || 0;
       found.health = wire.h | 0;
       found.emerged = !!wire.e;
       found.frozen = !wire.e;
@@ -13966,6 +14040,14 @@ function _mpApplyState(state) {
   // the incoming pose as the new next.
   _mp.myPid = _mpPid();
   _mp.mySeatIdx = _mp.seats.findIndex((s) => s && s.kind === 'human' && s.pid === _mp.myPid);
+  // Keep the live entry id in sync with the seat the server says is
+  // ours. e_* messages update this too on rejoin.
+  if (_mp.mySeatIdx !== -1) {
+    const mySeat = _mp.seats[_mp.mySeatIdx];
+    if (mySeat && typeof mySeat.currentEntryId === 'number') {
+      _mp.myEntryId = mySeat.currentEntryId | 0;
+    }
+  }
   const nowMs = performance.now();
   const others = [];
   if (!_mp._boatSnaps) _mp._boatSnaps = new Map(); // pid -> { prev, next }
@@ -14198,7 +14280,32 @@ function _rejoinSession() {
     localPlayer.plasticCount = 0;
     localPlayer.health = MAX_HEALTH;
     localPlayer.boostEnergy = 1;
+    localPlayer.vx = 0;
+    localPlayer.vz = 0;
+    localPlayer.lastHitTime = -999;
+    // Respawn at a fresh spot so the player isn't stuck where their
+    // previous session ended (often mid-combat or on an island edge).
+    try {
+      if (typeof findRespawnPoint === 'function') {
+        const sp = findRespawnPoint();
+        localPlayer.x = sp.x;
+        localPlayer.z = sp.z;
+      } else if (typeof SPAWN_CORNERS !== 'undefined' && SPAWN_CORNERS.length) {
+        const corner = SPAWN_CORNERS[
+          (_mp && _mp.mySeatIdx >= 0 ? _mp.mySeatIdx : 0) % SPAWN_CORNERS.length
+        ];
+        localPlayer.x = corner.x;
+        localPlayer.z = corner.z;
+      }
+      localPlayer.rotation = Math.atan2(-localPlayer.x, -localPlayer.z);
+    } catch (e) {}
   }
+  // Reset combo state + upgrade timers so the new run starts fresh.
+  try { comboCount = 0; comboTimer = 0; } catch (e) {}
+  // Make sure the gameOver flag isn't stuck before the overlay CSS
+  // settles — without this the loop still short-circuits for a frame.
+  respawnActive = false;
+  countdownActive = false;
 
   // Resume ambient sound that showGameOver() stopped.
   try { startOceanAmbient(); } catch (e) {}
