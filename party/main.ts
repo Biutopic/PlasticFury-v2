@@ -137,11 +137,12 @@ const HIT_INVULN_MS       = 700;  // match client INVULN_AFTER_HIT (0.7s)
 
 // Shared garbage field. Keep the counts modest so the per-tick wire
 // + initial snapshot stay cheap.
-const MAX_GARBAGE          = 40;
+const MAX_GARBAGE          = 25;   // lower cap so the ocean doesn't clog
 const GARBAGE_WORLD_RADIUS = 155;  // slightly inside the client WORLD_RADIUS (160)
 const GARBAGE_ISLAND_PAD   = 18;
-const GARBAGE_SPAWN_MS     = 900;  // ~1.1 Hz spawn while under cap
+const GARBAGE_SPAWN_MS     = 2000; // ~0.5 Hz spawn — slower drip into the field
 const PINK_CHANCE          = 0.10; // fraction of spawns that heal
+const MAX_DEATH_DROP       = 6;    // cap per-sink drop so a chain of deaths doesn't flood
 
 // World entities
 const PIRATE_FIRST_SPAWN_MS = 45_000;   // ~45 s into a round
@@ -639,7 +640,7 @@ export default class TrashureRoom implements Party.Server {
     // sinker once they respawn) can scoop them. Also drops the
     // sinker's score by the same amount.
     if (data.type === "sink_drop" && seat?.kind === "human") {
-      const pts = Math.max(0, Math.min(50, Number(data.pts) || 0));
+      const pts = Math.max(0, Math.min(MAX_DEATH_DROP, Number(data.pts) || 0));
       if (pts === 0) return;
       // Clamp drop count + position jitter so we don't blow past the
       // garbage cap (extras beyond MAX_GARBAGE are silently skipped).
