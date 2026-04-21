@@ -14,7 +14,10 @@
 
 import type * as Party from "partykit/server";
 
-type Phase = "LOBBY" | "COUNTDOWN" | "PLAYING" | "RECAP";
+// Always-on world: there is a single PLAYING phase. Each player has a
+// personal 3-min session timer that starts on connect / rejoin. No
+// lobby, no countdown, no global recap.
+type Phase = "PLAYING";
 
 type Seat =
   | { kind: "empty" }
@@ -23,7 +26,6 @@ type Seat =
       id: string;
       pid: string;
       name: string;
-      ready: boolean;
       color: string;
       lastSeenAt: number;
       // Live boat pose — updated from client 'boat' messages at ~10 Hz,
@@ -41,8 +43,23 @@ type Seat =
       // Invulnerability window after a hit (epoch ms) — server rejects
       // additional damage before this to match the client's INVULN_AFTER_HIT.
       invulnUntil: number;
-      // Cumulative pickup count this round.
+      // Cumulative pickup count for the player's *current* session.
+      // Frozen when sessionEndedAt is set; reset on rejoin.
       score: number;
+      // --- Personal session timer (always-on world) ---
+      // Epoch ms when the player's current 3-min session started. Each
+      // player has their own independent session; there is no global
+      // round. Refreshed on connect and on rejoin.
+      sessionStartedAt: number;
+      // Null while the session is in progress; set to epoch ms when
+      // the 3-min timer expires. While non-null, the player becomes a
+      // spectator, their score is frozen, and they can click Rejoin
+      // to start a fresh session.
+      sessionEndedAt: number | null;
+      // The entry id this seat's *current alive* session belongs to,
+      // or -1 if the player is between sessions. Used to attach score
+      // updates to the correct historical entry. See `entries` below.
+      currentEntryId: number;
     }
   | { kind: "bot"; name: string; color: string };
 
@@ -112,26 +129,38 @@ type Bomb = {
   piId: number;        // owning pirate id
 };
 
+// A historical session entry on the leaderboard. One per session
+// attempt. When a player finishes their 3-min session, their entry is
+// frozen (sessionEndedAt set, alive=false). When they click Rejoin, a
+// NEW entry is created — a single player can have many entries.
+// Each viewer only sees entries whose session window overlapped with
+// their own current session (the "cohort" model).
+type SessionEntry = {
+  entryId: number;
+  seatIdx: number;              // -1 once the owning seat is gone
+  pid: string;                  // stable player id (from WS query param)
+  name: string;
+  color: string;
+  sessionStartedAt: number;     // epoch ms
+  sessionEndedAt: number | null; // null while alive, set when 3 min expires
+  score: number;                 // live while alive, frozen on end
+};
+
 interface RoomState {
   phase: Phase;
-  // Epoch ms when the current phase ends. Server-authoritative — the
-  // client renders the countdown by subtracting Date.now().
+  // Epoch ms when the current phase ends. Always 0 in this build —
+  // there is no global round clock; each player has a personal timer.
   phaseEndsAt: number;
-  // Fixed 4-slot grid. Seat index is stable for a given round so the
-  // leaderboard layout doesn't jump when someone joins or leaves.
+  // Dynamic seat list. Grows up to MAX_SEATS as players join; seats
+  // flip back to "empty" on disconnect but the slot itself is reused
+  // so seat indices stay stable for existing players.
   seats: Seat[];
 }
 
-// Phase durations (ms)
-// LOBBY has no auto-timeout: rounds only start when every human clicks
-// READY. The server sets phaseEndsAt to a "quick start" value once the
-// last human readies up, used only for the ~1.5 s settle before the 3-2-1.
-const QUICK_START_MS   = 10_000; // 10s grace after all humans ready
-const COUNTDOWN_MS     = 3_000;
-const PLAYING_MS       = 180_000; // 3 minutes
-const RECAP_MS         = 15_000;
+// Personal session duration — each player gets their own 3-min run.
+const SESSION_MS       = 180_000; // 3 minutes per player
 const TICK_MS          = 100;     // 10 Hz. Halved from 20 Hz to keep bandwidth low — client-side snapshot interpolation fills the gap smoothly.
-const MIN_HUMANS_TO_START = 2;    // solo lobby never advances: use "Play offline" on the client
+const MAX_SEATS           = 50;   // target concurrent player cap — expand as needed
 const MAX_HEALTH_SERVER   = 100;  // match client MAX_HEALTH
 const HIT_INVULN_MS       = 700;  // match client INVULN_AFTER_HIT (0.7s)
 
@@ -145,8 +174,12 @@ const PINK_CHANCE          = 0.10; // fraction of spawns that heal
 const MAX_DEATH_DROP       = 6;    // cap per-sink drop so a chain of deaths doesn't flood
 
 // World entities
-const PIRATE_FIRST_SPAWN_MS = 45_000;   // ~45 s into a round
-const PIRATE_MAX            = 3;
+// Always-on world: one pirate ship is always present. After a sink,
+// a new one respawns after PIRATE_RESPAWN_MS — the threat never goes
+// away, but never escalates into a "wave" either.
+const PIRATE_FIRST_SPAWN_MS = 0;        // spawn immediately when the room boots
+const PIRATE_MAX            = 1;        // single boat at a time
+const PIRATE_RESPAWN_MS     = 10_000;   // 10s dormant window after a kill
 const PIRATE_HP_FULL        = 100;
 const PIRATE_SPEED          = 6;
 const PIRATE_EMERGE_MS      = 2_500;
@@ -160,31 +193,19 @@ const WHALE_CYCLE_MS        = 60_000;   // full submerged -> surface -> submerge
 const HYDRO_SPAWN_MS        = 10_000;
 const HYDRO_SPEED           = 4.0;
 
-const COLORS    = ["#ff5a3c", "#ffd93d", "#4ade80", "#22d3ee"];
-
-function makeEmptySeats(): Seat[] {
-  // Online multiplayer is humans-only. Unfilled slots stay visibly
-  // empty in the lobby and produce no AI boat in the round.
-  return [{ kind: "empty" }, { kind: "empty" }, { kind: "empty" }, { kind: "empty" }];
-}
+// Palette rotates by seat index so boats stay visually distinct even
+// when the room is near full. Seven distinct hues; beyond that the
+// palette simply cycles.
+const COLORS    = ["#ff5a3c", "#ffd93d", "#4ade80", "#22d3ee", "#a78bfa", "#f472b6", "#60a5fa"];
 
 function initialState(): RoomState {
   return {
-    phase: "LOBBY",
-    // 0 = no countdown armed. Server arms it only when all humans are ready.
+    phase: "PLAYING",
+    // No global phase clock — personal timers live on the seats.
     phaseEndsAt: 0,
-    seats: makeEmptySeats(),
+    // Seats grow dynamically as players arrive (up to MAX_SEATS).
+    seats: [],
   };
-}
-
-// Lobby short-circuit: at least MIN_HUMANS_TO_START humans AND all of
-// them have clicked Ready. Solo humans are intentionally excluded so
-// the countdown never fires for a one-player lobby — they should hit
-// "Play offline" instead.
-function allHumansReady(state: RoomState): boolean {
-  const humans = state.seats.filter((s) => s.kind === "human") as Extract<Seat, { kind: "human" }>[];
-  if (humans.length < MIN_HUMANS_TO_START) return false;
-  return humans.every((h) => h.ready);
 }
 
 function humanCount(state: RoomState): number {
@@ -201,16 +222,31 @@ export default class TrashureRoom implements Party.Server {
   private garbageNextId = 1;
   private garbageSpawnAcc = 0;
 
-  // World — lifecycle tied to PLAYING.
+  // World — always alive in this build. Entities are created when the
+  // first player connects and persist until the room shuts down.
   private pirates: Pirate[] = [];
   private pirateNextId = 1;
+  // When > 0: we destroyed the pirate at this epoch ms + RESPAWN_MS
+  // and we should spawn a fresh one once the cooldown elapses. 0 means
+  // "no respawn pending" (either a pirate is alive or we're booting).
+  private pirateRespawnAt = 0;
   private mines: Mine[] = [];
   private mineNextId = 1;
   private bombs: Bomb[] = [];
   private bombNextId = 1;
   private whale: Whale | null = null;
   private hydro: Hydro | null = null;
-  private roundStartedAt = 0;
+  // Epoch ms when the oldest currently-connected player's session
+  // began — used as the "world start" reference for staggered events
+  // like the whale / hydronaute first-spawn delays.
+  private worldStartedAt = 0;
+
+  // --- Session history ---
+  // One entry per session attempt. Frozen entries persist for viewers
+  // whose session window overlapped with the entry. See SessionEntry
+  // for the cohort filtering rule.
+  private entries: SessionEntry[] = [];
+  private entryNextId = 1;
 
   constructor(readonly room: Party.Room) {
     this.state = initialState();
@@ -254,6 +290,9 @@ export default class TrashureRoom implements Party.Server {
   }
 
   // --- WORLD ---
+  // Only called when the room empties out (no humans left) to free
+  // memory. In the always-on build we otherwise leave world entities
+  // alive between players so the ocean feels continuous.
   private resetWorld() {
     this.pirates = [];
     this.mines = [];
@@ -263,6 +302,7 @@ export default class TrashureRoom implements Party.Server {
     this.pirateNextId = 1;
     this.mineNextId = 1;
     this.bombNextId = 1;
+    this.pirateRespawnAt = 0;
   }
   private spawnPirate(): Pirate {
     const a = Math.random() * Math.PI * 2;
@@ -295,18 +335,28 @@ export default class TrashureRoom implements Party.Server {
     return best;
   }
   private tickWorld(dtMs: number) {
-    if (this.state.phase !== "PLAYING") return;
+    // Always-on world — no phase gate. We only sleep the ticker
+    // entirely when humanCount() drops to 0 (handled in startTicker).
     const now = Date.now();
-    const elapsed = now - this.roundStartedAt;
+    const elapsed = now - this.worldStartedAt;
     const dt = dtMs / 1000;
 
-    // Spawn pirates staggered: first at PIRATE_FIRST_SPAWN_MS, then
-    // one each ~60 s thereafter up to PIRATE_MAX.
-    const want = Math.min(PIRATE_MAX, Math.max(0, Math.floor((elapsed - PIRATE_FIRST_SPAWN_MS) / 60_000) + 1));
-    while (this.pirates.length < want) {
-      const p = this.spawnPirate();
-      this.pirates.push(p);
-      this.room.broadcast(JSON.stringify({ type: "p_add", p: this.pirateWire(p) }));
+    // Pirate lifecycle: exactly PIRATE_MAX (1) pirate alive at a time.
+    // When one is destroyed, `pirateRespawnAt` is armed to now + 10s
+    // by the p_hit kill branch. We spawn a replacement when the cooldown
+    // elapses. No progressive ramp; the threat is constant, never escalates.
+    if (this.pirates.length < PIRATE_MAX) {
+      const shouldSpawn =
+        // First spawn when the world boots (first human arrives).
+        (this.pirateRespawnAt === 0 && elapsed >= PIRATE_FIRST_SPAWN_MS) ||
+        // Subsequent respawns after the 10s cooldown.
+        (this.pirateRespawnAt > 0 && now >= this.pirateRespawnAt);
+      if (shouldSpawn) {
+        const p = this.spawnPirate();
+        this.pirates.push(p);
+        this.pirateRespawnAt = 0;
+        this.room.broadcast(JSON.stringify({ type: "p_add", p: this.pirateWire(p) }));
+      }
     }
 
     // Whale spawns once at WHALE_SPAWN_MS and cycles surface/submerge.
@@ -499,11 +549,126 @@ export default class TrashureRoom implements Party.Server {
     }
   }
 
+  // --- SESSION ENTRIES ---
+  // Create a fresh entry for a new or rejoining player. Returns the
+  // new entry; broadcasting the add is handled by the caller (or by
+  // a full entries snapshot on first connect).
+  private createEntry(
+    seatIdx: number,
+    pid: string,
+    name: string,
+    color: string,
+    now: number,
+  ): SessionEntry {
+    const e: SessionEntry = {
+      entryId: this.entryNextId++,
+      seatIdx,
+      pid,
+      name,
+      color,
+      sessionStartedAt: now,
+      sessionEndedAt: null,
+      score: 0,
+    };
+    this.entries.push(e);
+    // Broadcast the newborn entry so every connected client whose
+    // session window now overlaps with this one can show it.
+    this.broadcastEntryAdd(e);
+    return e;
+  }
+
+  // Freeze a session entry. Called when a player's 3-min timer
+  // expires, when they disconnect mid-session, or during ghost reap.
+  private endEntry(entryId: number, now: number) {
+    const e = this.entries.find(x => x.entryId === entryId);
+    if (!e || e.sessionEndedAt !== null) return;
+    e.sessionEndedAt = now;
+    this.room.broadcast(JSON.stringify({
+      type: "e_end", id: e.entryId, at: now, score: e.score,
+    }));
+  }
+
+  // Returns the entries visible to a given viewer (seat idx), applying
+  // the cohort filter: an entry is visible if it's still alive OR it
+  // ended after the viewer's current session started. Self is always
+  // visible. Returns wire-format payloads.
+  private entriesForViewer(viewerSeatIdx: number): any[] {
+    const seat = this.state.seats[viewerSeatIdx];
+    // No viewer-seat context → show everything alive (used for pure
+    // spectators over the MAX_SEATS cap).
+    const viewerSince = (seat && seat.kind === "human") ? seat.sessionStartedAt : 0;
+    const out: any[] = [];
+    for (const e of this.entries) {
+      const alive = e.sessionEndedAt === null;
+      const overlapped = !alive && (e.sessionEndedAt as number) >= viewerSince;
+      const isSelf = seat && seat.kind === "human" && e.entryId === seat.currentEntryId;
+      if (alive || overlapped || isSelf) {
+        out.push(this.entryWire(e));
+      }
+    }
+    return out;
+  }
+
+  private entryWire(e: SessionEntry) {
+    return {
+      id: e.entryId,
+      seat: e.seatIdx,
+      name: e.name,
+      color: e.color,
+      startedAt: e.sessionStartedAt,
+      endedAt: e.sessionEndedAt,
+      score: e.score,
+    };
+  }
+
+  // Broadcast a freshly-added entry to all viewers whose cohort
+  // includes it (trivially: everyone alive now).
+  private broadcastEntryAdd(e: SessionEntry) {
+    this.room.broadcast(JSON.stringify({ type: "e_add", e: this.entryWire(e) }));
+  }
+
+  // Send the full cohort-filtered entries list to one connection.
+  // Used on connect / reconnect so the joining client starts with a
+  // consistent leaderboard.
+  private sendEntriesSnapshot(conn: Party.Connection) {
+    const seat = this.findSeatByConn(conn.id);
+    const seatIdx = seat ? this.state.seats.indexOf(seat) : -1;
+    const entries = this.entriesForViewer(seatIdx);
+    try { conn.send(JSON.stringify({ type: "e_snap", entries })); } catch {}
+  }
+
+  // Prune entries that no currently-connected viewer can see anymore.
+  // Safe to call periodically; keeps memory from growing unbounded.
+  private pruneEntries() {
+    if (this.entries.length === 0) return;
+    // Minimum "sessionStartedAt" among connected alive players — any
+    // finished entry that ended before this cutoff is invisible to
+    // everyone and can be dropped.
+    let cutoff = Infinity;
+    for (const s of this.state.seats) {
+      if (s.kind === "human" && s.sessionEndedAt === null) {
+        if (s.sessionStartedAt < cutoff) cutoff = s.sessionStartedAt;
+      }
+    }
+    if (cutoff === Infinity) {
+      // No active sessions — keep entries for now (they'll still be
+      // visible to the next joiner if they're alive). If there are no
+      // alive entries either, safe to drop everything.
+      const anyAlive = this.entries.some(e => e.sessionEndedAt === null);
+      if (!anyAlive) this.entries = [];
+      return;
+    }
+    this.entries = this.entries.filter(e =>
+      e.sessionEndedAt === null || (e.sessionEndedAt as number) >= cutoff
+    );
+  }
+
   // ---- lifecycle ----
   onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     // Client sends a persistent id in the WS URL query. On reconnect
     // (e.g. short network drop), we match on pid and re-seat the same
-    // player instead of letting a ghost seat pile up.
+    // player — we keep their active session (timer, score, entry)
+    // rather than starting over.
     let pid = "";
     try { pid = new URL(ctx.request.url).searchParams.get("pid") || ""; } catch {}
 
@@ -514,10 +679,13 @@ export default class TrashureRoom implements Party.Server {
       if (existingIdx !== -1) {
         const seat = this.state.seats[existingIdx] as Extract<Seat, { kind: "human" }>;
         seat.id = conn.id;
-        seat.ready = false; // don't carry over stale ready on reconnect
         seat.lastSeenAt = Date.now();
         // keep last known x/z/rot so the boat doesn't teleport on brief drops
         this.startTicker();
+        // Re-sync the world so the reconnecting client redraws it.
+        this.sendGarbageSnapshot(conn);
+        this.sendWorldSnapshot(conn);
+        this.sendEntriesSnapshot(conn);
         this.broadcastState();
         return;
       }
@@ -525,27 +693,52 @@ export default class TrashureRoom implements Party.Server {
 
     // Opportunistic cleanup: flush any ghost seats whose last activity
     // is older than GHOST_TIMEOUT_MS before we seat the new player.
-    // Saves late joiners from landing in a lobby full of zombies.
     this.reapGhostSeats();
 
-    // Mid-round joining is allowed: the player takes the first free
-    // seat. Spectator only when all 4 seats are already human.
-    const idx = this.state.seats.findIndex((s) => s.kind === "empty");
+    // Find an empty slot (reuses disconnected seats) or append a new
+    // one up to MAX_SEATS. Past the cap the player is a pure spectator.
+    let idx = this.state.seats.findIndex((s) => s.kind === "empty");
     if (idx === -1) {
-      conn.send(JSON.stringify({ type: "spectator" }));
-      conn.send(JSON.stringify({ type: "state", state: this.state }));
-      return;
+      if (this.state.seats.length < MAX_SEATS) {
+        idx = this.state.seats.length;
+        this.state.seats.push({ kind: "empty" });
+      } else {
+        conn.send(JSON.stringify({ type: "spectator" }));
+        conn.send(JSON.stringify({ type: "state", state: this.state }));
+        this.sendEntriesSnapshot(conn);
+        return;
+      }
     }
-    // Color is stable per seat index so the lobby grid doesn't reshuffle.
+    // Color cycles through the palette so distant boats stay visually distinct.
     const color = COLORS[idx % COLORS.length];
-    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0, boosting: false, health: MAX_HEALTH_SERVER, maxHealth: MAX_HEALTH_SERVER, invulnUntil: 0, score: 0 };
+    const now = Date.now();
+    // Create a fresh session entry for this new connection.
+    const entry = this.createEntry(idx, pid, "Capitaine", color, now);
+    this.state.seats[idx] = {
+      kind: "human",
+      id: conn.id,
+      pid,
+      name: "Capitaine",
+      color,
+      lastSeenAt: now,
+      x: 0, z: 0, rot: 0,
+      boosting: false,
+      health: MAX_HEALTH_SERVER,
+      maxHealth: MAX_HEALTH_SERVER,
+      invulnUntil: 0,
+      score: 0,
+      sessionStartedAt: now,
+      sessionEndedAt: null,
+      currentEntryId: entry.entryId,
+    };
+    // First human primes the world clock.
+    if (this.worldStartedAt === 0) this.worldStartedAt = now;
     this.startTicker();
     this.broadcastState();
-    // If a round is already in flight, sync the joiner's world + garbage.
-    if (this.state.phase === "PLAYING") {
-      this.sendGarbageSnapshot(conn);
-      this.sendWorldSnapshot(conn);
-    }
+    // Always sync world + garbage + entry history for a fresh player.
+    this.sendGarbageSnapshot(conn);
+    this.sendWorldSnapshot(conn);
+    this.sendEntriesSnapshot(conn);
   }
 
   onMessage(msg: string, conn: Party.Connection) {
@@ -619,6 +812,9 @@ export default class TrashureRoom implements Party.Server {
     // broadcast a 'g_pick' so every client removes the mesh + applies
     // the score/heal effect on the claimer.
     if (data.type === "pick" && seat?.kind === "human") {
+      // Finished players become spectators: their score is frozen
+      // and they can't pick up plastic until they rejoin.
+      if (seat.sessionEndedAt !== null) return;
       const gid = data.id | 0;
       const g = this.garbage.find(x => x.id === gid);
       if (!g || g.claimed) return;
@@ -636,10 +832,16 @@ export default class TrashureRoom implements Party.Server {
       // Death-drop pieces carry a points value (5); normal pieces = 1.
       const pts = ((g as any).points | 0) || 1;
       seat.score += pts;
+      // Mirror onto the current session entry so the leaderboard ticks.
+      const entry = this.entries.find(e => e.entryId === seat.currentEntryId);
+      if (entry) entry.score = seat.score;
       if (g.kind === 1) seat.health = Math.min(seat.maxHealth, seat.health + 25);
       this.room.broadcast(JSON.stringify({
         type: "g_pick", id: g.id, by: seatIdx,
         k: g.kind, s: seat.score, h: seat.health, p: pts,
+        // Entry id so clients can update the correct leaderboard row
+        // when multiple entries share the same seat/name.
+        eid: seat.currentEntryId,
       }));
       return;
     }
@@ -650,6 +852,9 @@ export default class TrashureRoom implements Party.Server {
     // sinker once they respawn) can scoop them. Also drops the
     // sinker's score by the same amount.
     if (data.type === "sink_drop" && seat?.kind === "human") {
+      // Session-ended spectators don't drop anything when they sink —
+      // they already stopped scoring when their timer ran out.
+      if (seat.sessionEndedAt !== null) return;
       // Drop ~25% of the sinker's score as normal-looking plastic
       // pieces with mixed point values (1, 2, or 3) so the total sums
       // close to the target. Capped by MAX_DEATH_DROP piece count so
@@ -684,6 +889,9 @@ export default class TrashureRoom implements Party.Server {
       }
       const dropped = items.reduce((s, it) => s + (it.p || 1), 0);
       seat.score = Math.max(0, seat.score - dropped);
+      // Keep the live entry in sync so the leaderboard reflects the loss.
+      const dropEntry = this.entries.find(e => e.entryId === seat.currentEntryId);
+      if (dropEntry) dropEntry.score = seat.score;
       return;
     }
 
@@ -704,6 +912,10 @@ export default class TrashureRoom implements Party.Server {
       p.health = Math.max(0, p.health - dmg);
       if (p.health <= 0) {
         this.pirates = this.pirates.filter(x => x.id !== pid);
+        // Arm the respawn cooldown. tickWorld will spawn a fresh
+        // pirate after PIRATE_RESPAWN_MS has elapsed — always-on
+        // world means there is always exactly one (modulo cooldown).
+        this.pirateRespawnAt = Date.now() + PIRATE_RESPAWN_MS;
         this.room.broadcast(JSON.stringify({
           type: "p_kill", id: pid, x: p.x, z: p.z,
           attacker: this.state.seats.indexOf(attackerSeat),
@@ -775,45 +987,70 @@ export default class TrashureRoom implements Party.Server {
     if (data.type === "hello" && seat?.kind === "human") {
       const raw = String(data.name ?? "Capitaine").slice(0, 16).trim() || "Capitaine";
       seat.name = this.ensureUniqueName(raw, conn.id);
+      // Propagate the name onto the live session entry so the
+      // leaderboard shows the captain's chosen handle, not the default.
+      const e = this.entries.find(x => x.entryId === seat.currentEntryId);
+      if (e) {
+        e.name = seat.name;
+        this.room.broadcast(JSON.stringify({ type: "e_upd", id: e.entryId, name: e.name }));
+      }
       this.broadcastState();
       return;
     }
 
-    if (data.type === "ready" && seat?.kind === "human" && this.state.phase === "LOBBY") {
-      seat.ready = !!data.value;
-      // Arm the quick-start countdown only when every human is ready.
-      // If someone un-readies, disarm it.
-      if (allHumansReady(this.state)) {
-        this.state.phaseEndsAt = Date.now() + QUICK_START_MS;
-      } else {
-        this.state.phaseEndsAt = 0;
-      }
+    // Rejoin: a finished player wants another 3-min run. Create a new
+    // session entry, reset score/health, start a fresh timer. The
+    // previous entry stays frozen and visible to witnesses.
+    if (data.type === "rejoin" && seat?.kind === "human") {
+      if (seat.sessionEndedAt === null) return; // already alive, ignore
+      const now = Date.now();
+      seat.sessionStartedAt = now;
+      seat.sessionEndedAt = null;
+      seat.score = 0;
+      seat.health = seat.maxHealth;
+      seat.invulnUntil = 0;
+      const entry = this.createEntry(
+        this.state.seats.indexOf(seat),
+        seat.pid,
+        seat.name,
+        seat.color,
+        now,
+      );
+      seat.currentEntryId = entry.entryId;
+      // Tell the rejoining client directly so it can restart its UI.
+      try { conn.send(JSON.stringify({ type: "rejoined", entryId: entry.entryId, sessionStartedAt: now, sessionMs: SESSION_MS })); } catch {}
       this.broadcastState();
       return;
     }
   }
 
   onClose(conn: Party.Connection) {
-    // Human drops → their seat flips back to a bot so the round stays
-    // at 4 boats. Their score (once we add it in M4) will persist on the
-    // bot until round end.
     const idx = this.state.seats.findIndex(
       (s) => s.kind === "human" && s.id === conn.id
     );
     if (idx !== -1) {
-      // Humans-only mode: vacated seat goes back to empty, not bot.
-      this.state.seats[idx] = { kind: "empty" };
-      // If the drop breaks the all-ready condition, disarm the quick
-      // start so the remaining players aren't catapulted out of lobby.
-      if (this.state.phase === "LOBBY" && !allHumansReady(this.state)) {
-        this.state.phaseEndsAt = 0;
+      const seat = this.state.seats[idx] as Extract<Seat, { kind: "human" }>;
+      // If they were mid-session, freeze their entry at its current
+      // score. Witnesses who were playing alongside will still see
+      // it on their leaderboards until they too finish or leave.
+      if (seat.sessionEndedAt === null) {
+        this.endEntry(seat.currentEntryId, Date.now());
       }
+      this.state.seats[idx] = { kind: "empty" };
       this.broadcastState();
     }
+    // Drop entries no one can see anymore.
+    this.pruneEntries();
     if (humanCount(this.state) === 0) {
-      // No humans left: stop burning compute. A new connection will
+      // No humans left: stop burning compute + reset the world so the
+      // next arrival starts with a clean slate. A new connection will
       // restart the ticker via onConnect.
       this.stopTicker();
+      this.resetWorld();
+      this.worldStartedAt = 0;
+      // Entries live only as long as someone can see them; safe to
+      // drop the frozen ones here too.
+      this.pruneEntries();
     }
   }
 
@@ -835,73 +1072,53 @@ export default class TrashureRoom implements Party.Server {
   }
 
   // ---- state machine ----
+  // Always-on world. The tick is responsible for:
+  //   1. reaping ghost seats (stale connections)
+  //   2. expiring per-seat 3-min sessions (freeze entry, notify client)
+  //   3. shutting down the ticker + world when the room empties
   private tick() {
     const now = Date.now();
-    // Clean up ghost seats first so the "all ready" check below is honest.
-    if (this.reapGhostSeats()) {
-      // If a ghost being reaped breaks the all-ready condition, disarm
-      // the quick-start so the remaining solo player isn't catapulted
-      // into a round with no real opponent.
-      if (this.state.phase === "LOBBY" && !allHumansReady(this.state)) {
-        this.state.phaseEndsAt = 0;
+    let stateChanged = false;
+
+    if (this.reapGhostSeats()) stateChanged = true;
+
+    // Expire any sessions whose 3-min timer has run out. We freeze the
+    // entry and send a private "session_end" to that connection so the
+    // client can show the "Your session: X — Rejoin" overlay.
+    for (let i = 0; i < this.state.seats.length; i++) {
+      const s = this.state.seats[i];
+      if (s.kind !== "human") continue;
+      if (s.sessionEndedAt !== null) continue;
+      if (now >= s.sessionStartedAt + SESSION_MS) {
+        s.sessionEndedAt = now;
+        // Freeze the historical entry + broadcast the end to every
+        // client so their leaderboards can FIN-badge this row.
+        this.endEntry(s.currentEntryId, now);
+        // Tell the owning connection privately so only they see the
+        // "your session ended, rejoin?" overlay.
+        const conn = [...this.room.getConnections()].find(c => c.id === s.id);
+        if (conn) {
+          try { conn.send(JSON.stringify({ type: "session_end", score: s.score, entryId: s.currentEntryId })); } catch {}
+        }
+        stateChanged = true;
       }
-      this.broadcastState();
     }
-    // If every human has vanished, reset to a fresh lobby so the next
-    // player to arrive doesn't inherit a stale COUNTDOWN/PLAYING/RECAP.
-    if (humanCount(this.state) === 0 && this.state.phase !== "LOBBY") {
-      this.state = initialState();
-      this.broadcastState();
-      this.stopTicker();
+
+    // If every human has vanished, reset everything so the next
+    // arrival gets a clean slate.
+    if (humanCount(this.state) === 0) {
+      if (this.state.seats.length > 0) {
+        this.state = initialState();
+        this.stopTicker();
+        this.resetWorld();
+        this.worldStartedAt = 0;
+        this.entries = [];
+        this.broadcastState();
+      }
       return;
     }
-    // LOBBY never auto-advances on a clock. The only trigger is "all
-    // humans ready" (and there must be >= MIN_HUMANS_TO_START), which
-    // arms phaseEndsAt to now + QUICK_START_MS in the ready handler.
-    if (this.state.phase === "LOBBY") {
-      if (this.state.phaseEndsAt === 0) return;
-      if (now < this.state.phaseEndsAt) return;
-    } else {
-      if (now < this.state.phaseEndsAt) return;
-    }
-    switch (this.state.phase) {
-      case "LOBBY":
-        // By construction we only get here when phaseEndsAt was armed
-        // by all-ready. Advance to the 3-2-1 countdown.
-        this.state.phase = "COUNTDOWN";
-        this.state.phaseEndsAt = now + COUNTDOWN_MS;
-        break;
-      case "COUNTDOWN":
-        this.state.phase = "PLAYING";
-        this.state.phaseEndsAt = now + PLAYING_MS;
-        this.roundStartedAt = now;
-        // Reset per-round state.
-        for (const s of this.state.seats) {
-          if (s.kind === "human") { s.score = 0; s.health = s.maxHealth; }
-        }
-        this.garbage.length = 0;
-        this.ensureGarbageField();
-        this.resetWorld();
-        break;
-      case "PLAYING":
-        this.state.phase = "RECAP";
-        this.state.phaseEndsAt = now + RECAP_MS;
-        this.clearGarbageField();
-        this.resetWorld();
-        this.room.broadcast(JSON.stringify({ type: "w_reset" }));
-        break;
-      case "RECAP":
-        // Fresh round: reset ready flags, freshen bot names, keep humans.
-        const keptHumans = this.state.seats.map((s) => s.kind === "human" ? { ...s, ready: false } : s);
-        this.state = initialState();
-        for (let i = 0; i < 4; i++) {
-          if (keptHumans[i] && keptHumans[i].kind === "human") this.state.seats[i] = keptHumans[i];
-        }
-        // Lobby waits for ready clicks again, no auto-timer.
-        this.state.phaseEndsAt = 0;
-        break;
-    }
-    this.broadcastState();
+
+    if (stateChanged) this.broadcastState();
   }
 
   // During PLAYING, fan out a compact "poses" message with just the
@@ -915,11 +1132,16 @@ export default class TrashureRoom implements Party.Server {
   private lastPoseHash = "";
 
   private broadcastIfPlaying() {
-    if (this.state.phase !== "PLAYING") return;
+    // Always-on: no phase guard. We still skip when everyone is idle
+    // via the pose hash below.
     const poses: Array<any> = [];
     for (let i = 0; i < this.state.seats.length; i++) {
       const s = this.state.seats[i];
       if (s.kind === "human") {
+        // Skip broadcasting boat poses for players whose session
+        // ended — they become spectators on other clients and their
+        // boat mesh is hidden.
+        if (s.sessionEndedAt !== null) continue;
         const p: any = {
           i,
           x: Math.round(s.x * 100) / 100,
@@ -927,6 +1149,10 @@ export default class TrashureRoom implements Party.Server {
           r: Math.round(s.rot * 1000) / 1000,
           h: s.health | 0, // 0..100
           s: s.score | 0,
+          // Entry id attached so the client can route the live score
+          // update to the correct leaderboard row even when the same
+          // name has multiple frozen entries sitting next to a new one.
+          eid: s.currentEntryId,
         };
         if (s.boosting) p.b = 1;
         poses.push(p);

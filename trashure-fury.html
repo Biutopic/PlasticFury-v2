@@ -1012,7 +1012,10 @@
       color: #d7ecf7; font-family: var(--font-body);
       backdrop-filter: blur(4px);
     }
-    #waiting-room.active { display: flex; }
+    /* Always-on world: the waiting room is permanently hidden. The
+       `.active` toggle is a no-op now — kept the rule as !important
+       so any legacy code that still adds the class can't resurrect it. */
+    #waiting-room, #waiting-room.active { display: none !important; }
     #waiting-room .wr-eyebrow {
       font-family: var(--font-heading);
       font-size: 0.7rem; letter-spacing: 0.3em; text-transform: uppercase;
@@ -13427,15 +13430,18 @@ function _mpGrabEls() {
 }
 
 function _mpConnect() {
+  // Always-on world: we no longer pop a waiting-room lobby. We grab
+  // the element refs so legacy helpers don't NPE, but the room never
+  // becomes visible — the local round launches as soon as the server
+  // confirms our seat (via the first state message).
   _mpGrabEls();
-  if (!_mp.wrEl) return;
-  _mp.wrEl.classList.add('active');
-  _mp.wrEl.setAttribute('aria-hidden', 'false');
-  _mpShowHint(tr('wr_connecting'));
+  if (_mp.wrEl) {
+    _mp.wrEl.classList.remove('active');
+    _mp.wrEl.setAttribute('aria-hidden', 'true');
+  }
   try {
     _mp.ws = new WebSocket(_mpResolveUrl());
   } catch (e) {
-    _mpShowHint(tr('wr_disconnected'));
     _mpScheduleReconnect();
     return;
   }
@@ -13943,18 +13949,9 @@ function _mpTrySendHit(victim, dmg, source) {
 }
 
 function _mpApplyState(state) {
-  const prevPhase = _mp.phase;
-  // When we transition back into LOBBY after a completed round, reload
-  // the page so the next round starts from a clean slate — scores,
-  // garbage, pirates, bot AI, everything. Doing the reload here (not
-  // at PLAYING start) absorbs the load time into the lobby wait
-  // instead of stalling the 3-2-1 countdown → play transition.
-  if (state.phase === 'LOBBY' && prevPhase && prevPhase !== 'LOBBY' &&
-      typeof gameStarted !== 'undefined' && gameStarted) {
-    try { if (_mp.ws) _mp.ws.close(); } catch (e) {}
-    location.reload();
-    return;
-  }
+  // Always-on world build: there is no LOBBY/COUNTDOWN/RECAP cycle
+  // anymore, so the legacy "reload on LOBBY re-entry" trap is gone.
+  // The server sends state.phase === "PLAYING" continuously.
   _mp.phase = state.phase;
   _mp.phaseEndsAt = state.phaseEndsAt;
   _mp.seats = Array.isArray(state.seats) ? state.seats : [];
@@ -14198,30 +14195,16 @@ function _beginLocalRound() {
 }
 
 function beginGame() {
-  // Hide the start panel and enter the multiplayer waiting room.
-  // The local round is launched when the server reports PLAYING.
+  // Always-on world: hit the WS in the background and launch the
+  // local round immediately. The server's state / poses / entries
+  // messages layer in over the top as soon as they arrive — no
+  // waiting-room middle step. Playable within the first asset tick.
   const ss = document.getElementById('start-screen');
   if (ss) ss.hidden = true;
-  _mp.roundLaunched = false;
+  _mp.roundLaunched = true;
   _mp.selfReady = false;
   _mpConnect();
-  _mpStartTickingTimer();
-  // Wire ready/leave once.
-  _mpGrabEls();
-  if (_mp.wrReady && !_mp.wrReady._bound) {
-    _mp.wrReady.addEventListener('click', _mpToggleReady);
-    _mp.wrReady._bound = true;
-  }
-  const leaveBtn = document.getElementById('wr-leave-btn');
-  if (leaveBtn && !leaveBtn._bound) {
-    leaveBtn.addEventListener('click', _mpLeave);
-    leaveBtn._bound = true;
-  }
-  const soloBtn = document.getElementById('wr-solo-btn');
-  if (soloBtn && !soloBtn._bound) {
-    soloBtn.addEventListener('click', beginSolo);
-    soloBtn._bound = true;
-  }
+  _beginLocalRound();
 }
 
 startBtn.addEventListener('click', beginGame);
