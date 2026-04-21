@@ -14003,15 +14003,19 @@ function _mpApplyState(state) {
   const hasSeat = state.seats && state.seats.some(
     (s) => s && s.kind === 'human' && s.id && _mp.ws && s.id === _mpOwnConnId()
   );
+  // Always-on world: beginGame() already launched the local round and
+  // set roundLaunched = true, so this block is a no-op on the clean
+  // entry path. We keep it ONLY as a safety net for spectators who
+  // freed up a seat and need to jump in — roundLaunched stays sticky
+  // once true so we never double-launch or re-enter the menu.
   if (state.phase === 'PLAYING' && !_mp.roundLaunched && !_mp.isSpectator) {
     _mp.roundLaunched = true;
-    _mpHideWaitingRoom();
     _beginLocalRound();
   }
-  if (state.phase === 'LOBBY') {
-    // Fresh round cycle — re-arm the launcher.
-    _mp.roundLaunched = false;
-  }
+  // LOBBY no longer re-arms the launcher — the old server may still
+  // echo LOBBY while the new build propagates; resetting the flag
+  // would trigger a _beginLocalRound() → gameStarted → location.reload()
+  // loop that drops the player back to the menu.
 }
 // We don't get the server-assigned id directly, so just trust the
 // state: any 'human' seat in the snapshot belongs to SOME connected
