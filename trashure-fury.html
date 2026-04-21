@@ -3552,6 +3552,8 @@ function destroyPirate(pirate) {
 }
 
 function spawnGarbageIfNeeded(dt) {
+  // In MP, garbage is owned by the server — suppress local spawns.
+  if (_mp && _mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched) return;
   garbageSpawnTimer += dt;
   if (garbage.length >= MAX_GARBAGE_COUNT) { garbageSpawnTimer = 0; return; }
   const toSpawn = Math.floor(garbageSpawnTimer / GARBAGE_SPAWN_INTERVAL);
@@ -3744,6 +3746,26 @@ function pointInOBB(px, pz, obb, margin) {
 }
 
 function checkGarbageCollection(player, upgrades) {
+  // In MP, picking is server-authoritative. For the local player we
+  // detect touches and send a 'pick' message (server echoes back via
+  // g_pick which removes the piece + updates score/heal). Remote bot
+  // slots never pick locally — that's their own client's job. This
+  // path is unchanged for single-player.
+  const mpActive = !!(_mp && _mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched);
+  if (mpActive) {
+    if (player.id !== 'local') return;
+    const obbMp    = boatOBB(player);
+    const marginMp = GARBAGE_COLLECT_MARGIN;
+    for (let i = 0; i < garbage.length; i++) {
+      const g = garbage[i];
+      if (g._claimed) continue;
+      if (pointInOBB(g.x, g.z, obbMp, marginMp)) {
+        g._claimed = true; // local suppression so we don't spam picks on the same piece
+        try { _mp.ws.send(JSON.stringify({ type: 'pick', id: g.serverId | 0 })); } catch (e) {}
+      }
+    }
+    return;
+  }
   const obb    = boatOBB(player);
   const margin = GARBAGE_COLLECT_MARGIN;
   const collected = [];
@@ -11531,10 +11553,15 @@ function initGame() {
   // Whale spawns later (at WHALE_SPAWN_TIME seconds).
   // Pirates also spawn later (PIRATE_FIRST_SPAWN_TIME), handled in the game loop.
 
-  for (let i = 0; i < MAX_GARBAGE_COUNT; i++) {
-    const g = createGarbageItem();
-    garbage.push(g);
-    addGarbageMesh(g);
+  // Skip the initial garbage field in MP — server broadcasts a g_snap
+  // right after PLAYING starts and we mirror it faithfully.
+  const _mpActiveInit = !!(_mp && _mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched);
+  if (!_mpActiveInit) {
+    for (let i = 0; i < MAX_GARBAGE_COUNT; i++) {
+      const g = createGarbageItem();
+      garbage.push(g);
+      addGarbageMesh(g);
+    }
   }
 
   // Plastic on the island beach — only at waterline/sand level, never floating
@@ -12275,11 +12302,14 @@ function gameLoop(timestamp) {
       }
       bot.name = _mpRemote.name || bot.name;
       bot.isBoosting = !!_mpRemote.boosting;
-      // Server-authoritative health shows up on the player label above
-      // the remote captain's boat.
+      // Server-authoritative health + score show up on the player
+      // label + the leaderboard.
       if (typeof _mpRemote.health === 'number') {
         bot.health = _mpRemote.health;
         bot.maxHealth = bot.maxHealth || MAX_HEALTH || 100;
+      }
+      if (typeof _mpRemote.score === 'number') {
+        bot.totalCollected = _mpRemote.score;
       }
       // Boost visuals for the remote captain — chimney smoke + water
       // spray. Approximate the chimney offset from the bot's forward
@@ -13360,6 +13390,12 @@ function _mpConnect() {
       _mpApplySink(data);
     } else if (data.type === 'fire') {
       _mpApplyFire(data);
+    } else if (data.type === 'g_snap' || data.type === 'g_add') {
+      _mpApplyGarbageAdd(data);
+    } else if (data.type === 'g_pick') {
+      _mpApplyGarbagePick(data);
+    } else if (data.type === 'g_reset') {
+      _mpApplyGarbageReset();
     }
   });
   _mp.ws.addEventListener('close', () => {
@@ -13403,6 +13439,11 @@ function _mpApplyPoses(poses) {
     seat.x = p.x; seat.z = p.z; seat.rot = p.r;
     seat.boosting = !!p.b;
     if (typeof p.h === 'number') seat.health = p.h;
+    if (typeof p.s === 'number') seat.score = p.s;
+    // Server-authoritative score for the local player during MP.
+    if (p.i === _mp.mySeatIdx && typeof localPlayer !== 'undefined' && typeof p.s === 'number') {
+      localPlayer.totalCollected = p.s;
+    }
     if (p.i === _mp.mySeatIdx) continue; // don't interpolate our own boat
     const latest = { x: p.x, z: p.z, rot: p.r, t: nowMs };
     const entry = _mp._boatSnaps.get(seat.pid);
@@ -13414,6 +13455,7 @@ function _mpApplyPoses(poses) {
         rb.x = p.x; rb.z = p.z; rb.rot = p.r;
         rb.boosting = !!p.b;
         if (typeof p.h === 'number') rb.health = p.h;
+        if (typeof p.s === 'number') rb.score = p.s;
         break;
       }
     }
@@ -13477,6 +13519,90 @@ function _mpApplyFire(data) {
   fireballs.push(fb);
   addFireballMesh(fb);
   try { sfx.bombLaunch(fb.x, fb.z); } catch (e) {}
+}
+
+// --- Shared garbage (server-authoritative during PLAYING) ---
+// Incoming items replace or extend the local garbage[] array. Pickups
+// and respawn deletions go through matching helpers that also tear
+// down the rendered mesh.
+function _mpBuildGarbageFromServer(item) {
+  // item: { id, x, z, k }
+  let fbxIdx = -1, size = 'medium', points = 1;
+  if (typeof garbageFBXLoaded !== 'undefined' && garbageFBXLoaded && garbageFBXMeshes && garbageFBXMeshes.length > 0) {
+    fbxIdx = Math.floor(Math.random() * garbageFBXMeshes.length);
+    size   = garbageFBXMeshes[fbxIdx].size;
+    points = garbageFBXMeshes[fbxIdx].points;
+  }
+  return {
+    id: 'gs_' + item.id,          // client id prefixed for mesh registry uniqueness
+    serverId: item.id | 0,        // authoritative id used in pick messages
+    x: +item.x || 0,
+    z: +item.z || 0,
+    type: (typeof randomGarbageType === 'function') ? randomGarbageType() : 'bottle',
+    bobOffset: Math.random() * Math.PI * 2,
+    fbxIdx, size, points,
+    isHeal: item.k === 1,
+    _claimed: false,
+  };
+}
+function _mpApplyGarbageAdd(data) {
+  if (!Array.isArray(data.items) || typeof garbage === 'undefined') return;
+  // If it's a snapshot, wipe first so joiners pick up the exact field.
+  if (data.type === 'g_snap') _mpApplyGarbageReset();
+  for (const item of data.items) {
+    // Dedup: if we already have this server id, skip.
+    let dup = false;
+    for (let i = 0; i < garbage.length; i++) {
+      if (garbage[i].serverId === (item.id | 0)) { dup = true; break; }
+    }
+    if (dup) continue;
+    const g = _mpBuildGarbageFromServer(item);
+    garbage.push(g);
+    try { addGarbageMesh(g); } catch (e) {}
+  }
+}
+function _mpApplyGarbagePick(data) {
+  const sid = data.id | 0;
+  const seatIdx = data.by | 0;
+  // Remove the piece everywhere that knows about it.
+  for (let i = 0; i < garbage.length; i++) {
+    const g = garbage[i];
+    if (g.serverId !== sid) continue;
+    const gx = g.x, gz = g.z, isHeal = g.isHeal;
+    try { removeGarbageMesh(g.id); } catch (e) {}
+    garbage.splice(i, 1);
+    // Nice local feedback: floating "+1" at the pickup point, pitched
+    // pickup sfx if we were the one who got it.
+    if (typeof spawnFloatingText === 'function') {
+      spawnFloatingText(gx, gz, isHeal ? '+HP' : '+1', isHeal ? '#ff66aa' : '#ffd93d');
+    }
+    if (seatIdx === _mp.mySeatIdx && typeof sfx !== 'undefined') {
+      try { sfx.pickup(1); } catch (e) {}
+      if (isHeal && typeof triggerHealEffect === 'function') {
+        try { triggerHealEffect(gx, gz); } catch (e) {}
+      }
+    }
+    break;
+  }
+  // Server echoes the claimer's new score + health in the same message.
+  // Mirror them onto our picture of that seat so the leaderboard is
+  // instant (poses will confirm them again on the next tick).
+  if (Array.isArray(_mp.seats) && _mp.seats[seatIdx] && _mp.seats[seatIdx].kind === 'human') {
+    if (typeof data.s === 'number') _mp.seats[seatIdx].score = data.s;
+    if (typeof data.h === 'number') _mp.seats[seatIdx].health = data.h;
+  }
+  if (seatIdx === _mp.mySeatIdx && typeof localPlayer !== 'undefined') {
+    if (typeof data.s === 'number') localPlayer.totalCollected = data.s;
+    if (typeof data.h === 'number') localPlayer.health = data.h;
+  }
+}
+function _mpApplyGarbageReset() {
+  if (typeof garbage === 'undefined') return;
+  for (let i = garbage.length - 1; i >= 0; i--) {
+    const g = garbage[i];
+    try { removeGarbageMesh(g.id); } catch (e) {}
+    garbage.splice(i, 1);
+  }
 }
 
 // Victim sunk: respawn locally if we're the one sunk.

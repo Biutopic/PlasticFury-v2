@@ -41,6 +41,8 @@ type Seat =
       // Invulnerability window after a hit (epoch ms) — server rejects
       // additional damage before this to match the client's INVULN_AFTER_HIT.
       invulnUntil: number;
+      // Cumulative pickup count this round.
+      score: number;
     }
   | { kind: "bot"; name: string; color: string };
 
@@ -50,6 +52,14 @@ type Seat =
 // client's 3s ping cadence so backgrounded tabs (whose pings go via
 // a Web Worker to escape throttling) survive a transient hiccup.
 const GHOST_TIMEOUT_MS = 15_000;
+
+type Garbage = {
+  id: number;         // short numeric id, keeps wire tiny
+  x: number;
+  z: number;
+  kind: 0 | 1;        // 0 = plastic, 1 = pink-heal
+  claimed: boolean;
+};
 
 interface RoomState {
   phase: Phase;
@@ -73,6 +83,16 @@ const TICK_MS          = 50;      // 20 Hz. Full state on changes only; poses co
 const MIN_HUMANS_TO_START = 2;    // solo lobby never advances: use "Play offline" on the client
 const MAX_HEALTH_SERVER   = 100;  // match client MAX_HEALTH
 const HIT_INVULN_MS       = 700;  // match client INVULN_AFTER_HIT (0.7s)
+
+// Shared garbage field. Keep the counts modest so the per-tick wire
+// + initial snapshot stay cheap.
+const MAX_GARBAGE          = 40;
+const GARBAGE_WORLD_RADIUS = 155;  // slightly inside the client WORLD_RADIUS (160)
+const GARBAGE_ISLAND_PAD   = 18;
+const GARBAGE_SPAWN_MS     = 900;  // ~1.1 Hz spawn while under cap
+const PINK_CHANCE          = 0.10; // fraction of spawns that heal
+// Per-seat running score (plastic picked up). Mirrored onto seat.score;
+// broadcast inside poses so every client's leaderboard stays truthful.
 
 const COLORS    = ["#ff5a3c", "#ffd93d", "#4ade80", "#22d3ee"];
 
@@ -108,15 +128,59 @@ function humanCount(state: RoomState): number {
 export default class TrashureRoom implements Party.Server {
   state: RoomState;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  // Shared garbage field. Not stored on state because it's large +
+  // has its own lifecycle (spawn / claim / despawn); we broadcast
+  // deltas via dedicated messages rather than repacking full state.
+  private garbage: Garbage[] = [];
+  private garbageNextId = 1;
+  private garbageSpawnAcc = 0;
 
   constructor(readonly room: Party.Room) {
     this.state = initialState();
+  }
+
+  // --- GARBAGE ---
+  private spawnGarbageAround() {
+    // Pick a spot in the annulus between the island pad and world edge.
+    const a = Math.random() * Math.PI * 2;
+    const r = GARBAGE_ISLAND_PAD + Math.random() * (GARBAGE_WORLD_RADIUS - GARBAGE_ISLAND_PAD);
+    const g: Garbage = {
+      id: this.garbageNextId++,
+      x: Math.round((Math.cos(a) * r) * 100) / 100,
+      z: Math.round((Math.sin(a) * r) * 100) / 100,
+      kind: Math.random() < PINK_CHANCE ? 1 : 0,
+      claimed: false,
+    };
+    this.garbage.push(g);
+    this.room.broadcast(JSON.stringify({ type: "g_add", items: [{ id: g.id, x: g.x, z: g.z, k: g.kind }] }));
+  }
+  private ensureGarbageField() {
+    // Initial fill when a round starts.
+    while (this.garbage.length < MAX_GARBAGE) this.spawnGarbageAround();
+  }
+  private clearGarbageField() {
+    this.garbage.length = 0;
+    this.room.broadcast(JSON.stringify({ type: "g_reset" }));
+  }
+  private tickGarbage(dt: number) {
+    if (this.state.phase !== "PLAYING") return;
+    this.garbageSpawnAcc += dt;
+    while (this.garbageSpawnAcc >= GARBAGE_SPAWN_MS && this.garbage.length < MAX_GARBAGE) {
+      this.garbageSpawnAcc -= GARBAGE_SPAWN_MS;
+      this.spawnGarbageAround();
+    }
+  }
+  // Send the full garbage field to one connection (used on connect).
+  private sendGarbageSnapshot(conn: Party.Connection) {
+    const items = this.garbage.map(g => ({ id: g.id, x: g.x, z: g.z, k: g.kind }));
+    try { conn.send(JSON.stringify({ type: "g_snap", items })); } catch {}
   }
 
   private startTicker() {
     if (this.tickTimer) return;
     this.tickTimer = setInterval(() => {
       this.tick();
+      this.tickGarbage(TICK_MS);
       this.broadcastIfPlaying();
     }, TICK_MS);
   }
@@ -166,9 +230,11 @@ export default class TrashureRoom implements Party.Server {
     }
     // Color is stable per seat index so the lobby grid doesn't reshuffle.
     const color = COLORS[idx % COLORS.length];
-    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0, boosting: false, health: MAX_HEALTH_SERVER, maxHealth: MAX_HEALTH_SERVER, invulnUntil: 0 };
+    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0, boosting: false, health: MAX_HEALTH_SERVER, maxHealth: MAX_HEALTH_SERVER, invulnUntil: 0, score: 0 };
     this.startTicker();
     this.broadcastState();
+    // If a round is already in flight, sync the joiner's garbage field.
+    if (this.state.phase === "PLAYING") this.sendGarbageSnapshot(conn);
   }
 
   onMessage(msg: string, conn: Party.Connection) {
@@ -212,6 +278,36 @@ export default class TrashureRoom implements Party.Server {
         charge: Math.max(0, Math.min(1, Number(data.charge) || 0)),
       };
       this.room.broadcast(JSON.stringify(out), [conn.id]); // skip sender
+      return;
+    }
+
+    // Pickup claim: a player reports they drove into a piece of garbage.
+    // We validate (piece exists, unclaimed, distance sanity, seat exists),
+    // mark it claimed so competing claims from other players lose, and
+    // broadcast a 'g_pick' so every client removes the mesh + applies
+    // the score/heal effect on the claimer.
+    if (data.type === "pick" && seat?.kind === "human") {
+      const gid = data.id | 0;
+      const g = this.garbage.find(x => x.id === gid);
+      if (!g || g.claimed) return;
+      // Distance guard: make sure the claimer is within a sane radius
+      // of the piece. Uses the seat's last-known pose (updated at
+      // 20 Hz via the boat message).
+      const dx = g.x - seat.x, dz = g.z - seat.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > 20 * 20) return;  // more permissive than client OBB + magnet margin
+      g.claimed = true;
+      // Remove it from the active field.
+      const idx2 = this.garbage.indexOf(g);
+      if (idx2 !== -1) this.garbage.splice(idx2, 1);
+      const seatIdx = this.state.seats.indexOf(seat);
+      const pts = g.kind === 1 ? 1 : 1;
+      seat.score += pts;
+      if (g.kind === 1) seat.health = Math.min(seat.maxHealth, seat.health + 25);
+      this.room.broadcast(JSON.stringify({
+        type: "g_pick", id: g.id, by: seatIdx,
+        k: g.kind, s: seat.score, h: seat.health,
+      }));
       return;
     }
 
@@ -358,10 +454,17 @@ export default class TrashureRoom implements Party.Server {
       case "COUNTDOWN":
         this.state.phase = "PLAYING";
         this.state.phaseEndsAt = now + PLAYING_MS;
+        // Reset per-round state: scores zero, fresh garbage field.
+        for (const s of this.state.seats) {
+          if (s.kind === "human") { s.score = 0; s.health = s.maxHealth; }
+        }
+        this.garbage.length = 0;
+        this.ensureGarbageField();
         break;
       case "PLAYING":
         this.state.phase = "RECAP";
         this.state.phaseEndsAt = now + RECAP_MS;
+        this.clearGarbageField();
         break;
       case "RECAP":
         // Fresh round: reset ready flags, freshen bot names, keep humans.
@@ -395,6 +498,7 @@ export default class TrashureRoom implements Party.Server {
           z: Math.round(s.z * 100) / 100,
           r: Math.round(s.rot * 1000) / 1000,
           h: s.health | 0, // 0..100
+          s: s.score | 0,
         };
         if (s.boosting) p.b = 1;
         poses.push(p);
