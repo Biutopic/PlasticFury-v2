@@ -32,6 +32,7 @@ type Seat =
       x: number;
       z: number;
       rot: number;
+      boosting: boolean; // fresh every boat message; drives turbo-smoke fx
     }
   | { kind: "bot"; name: string; color: string };
 
@@ -155,7 +156,7 @@ export default class TrashureRoom implements Party.Server {
     }
     // Color is stable per seat index so the lobby grid doesn't reshuffle.
     const color = COLORS[idx % COLORS.length];
-    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0 };
+    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0, boosting: false };
     this.startTicker();
     this.broadcastState();
   }
@@ -175,14 +176,11 @@ export default class TrashureRoom implements Party.Server {
     }
 
     if (data.type === "boat" && seat?.kind === "human") {
-      // Position updates are frequent (~10 Hz per player). Mutate the
-      // seat in place; the broadcaster runs on the next tick anyway so
-      // we don't flood clients — the state is picked up on the next
-      // periodic snapshot.
       const x = Number(data.x), z = Number(data.z), r = Number(data.rot);
       if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(r)) {
         seat.x = x; seat.z = z; seat.rot = r;
       }
+      seat.boosting = !!data.b;
       return;
     }
 
@@ -315,17 +313,18 @@ export default class TrashureRoom implements Party.Server {
   // takeover) to keep the wire quiet.
   private broadcastIfPlaying() {
     if (this.state.phase !== "PLAYING") return;
-    const poses: Array<{ i: number; x: number; z: number; r: number }> = [];
+    const poses: Array<{ i: number; x: number; z: number; r: number; b?: 1 }> = [];
     for (let i = 0; i < this.state.seats.length; i++) {
       const s = this.state.seats[i];
       if (s.kind === "human") {
-        // 2-decimal precision is plenty for rendering; shrinks the wire.
-        poses.push({
+        const p: any = {
           i,
           x: Math.round(s.x * 100) / 100,
           z: Math.round(s.z * 100) / 100,
           r: Math.round(s.rot * 1000) / 1000,
-        });
+        };
+        if (s.boosting) p.b = 1; // only sent when truthy to keep payload small
+        poses.push(p);
       }
     }
     this.room.broadcast(JSON.stringify({ type: "poses", poses }));

@@ -12234,7 +12234,27 @@ function gameLoop(timestamp) {
         bot.x = nx; bot.z = nz; bot.rotation = nr;
       }
       bot.name = _mpRemote.name || bot.name;
-      addBoatWake(bot.id, bot.x, bot.z, bot.vx, bot.vz, RIPPLE_BOAT_AMP);
+      bot.isBoosting = !!_mpRemote.boosting;
+      // Boost visuals for the remote captain — chimney smoke + water
+      // spray. Approximate the chimney offset from the bot's forward
+      // vector; doesn't need to be pixel-perfect, just readable.
+      if (bot.isBoosting) {
+        const fx = -Math.sin(bot.rotation);
+        const fz = -Math.cos(bot.rotation);
+        const cx = bot.x + fx * 0.5;
+        const cz = bot.z + fz * 0.5;
+        const cy = getWaveHeight(bot.x, bot.z, gameTime) + 3.2;
+        // Throttle using per-bot acc so spawn rate doesn't scale with fps.
+        bot._mpTurboAcc = (bot._mpTurboAcc || 0) + dt;
+        while (bot._mpTurboAcc > 0.05) {
+          bot._mpTurboAcc -= 0.05;
+          spawnTurboParticle(cx, cy, cz);
+        }
+        // Bigger wake while boosting
+        addBoatWake(bot.id, bot.x, bot.z, bot.vx, bot.vz, RIPPLE_BOAT_AMP * 1.6);
+      } else {
+        addBoatWake(bot.id, bot.x, bot.z, bot.vx, bot.vz, RIPPLE_BOAT_AMP);
+      }
       continue; // skip local AI / movement / collection entirely
     }
     let bi = computeBotInput(bot, dt);
@@ -13208,11 +13228,13 @@ function _mpStartBoatUploader() {
       if (_mp.phase !== 'PLAYING' || !_mp.roundLaunched) return;
       if (typeof localPlayer === 'undefined' || !localPlayer) return;
       try {
+        const boosting = !!(localPlayer.isBoosting);
         _mp.ws.send(JSON.stringify({
           type: 'boat',
           x: +localPlayer.x.toFixed(2),
           z: +localPlayer.z.toFixed(2),
           rot: +((localPlayer.rotation || 0).toFixed(3)),
+          b: boosting ? 1 : 0,
         }));
       } catch (e) {}
     };
@@ -13327,15 +13349,15 @@ function _mpApplyPoses(poses) {
     const seat = _mp.seats[p.i];
     if (!seat || seat.kind !== 'human') continue;
     seat.x = p.x; seat.z = p.z; seat.rot = p.r;
+    seat.boosting = !!p.b;
     if (p.i === _mp.mySeatIdx) continue; // don't interpolate our own boat
     const latest = { x: p.x, z: p.z, rot: p.r, t: nowMs };
     const entry = _mp._boatSnaps.get(seat.pid);
     if (!entry) _mp._boatSnaps.set(seat.pid, { prev: latest, next: latest });
     else { entry.prev = entry.next; entry.next = latest; }
-    // Keep remoteBoats entries in sync so _mpRemoteByBotId mapping sees
-    // up-to-date positions (names stay from the last full state).
+    // Keep remoteBoats in sync so the game loop mapping sees fresh data.
     for (const rb of _mp.remoteBoats) {
-      if (rb.seatIdx === p.i) { rb.x = p.x; rb.z = p.z; rb.rot = p.r; break; }
+      if (rb.seatIdx === p.i) { rb.x = p.x; rb.z = p.z; rb.rot = p.r; rb.boosting = !!p.b; break; }
     }
   }
 }
