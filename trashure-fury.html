@@ -5385,6 +5385,19 @@ function updateFireballs(dt, now) {
 
     let hit = false;
 
+    // Remote-visual fireballs (spawned from another captain's shot
+    // via the server) don't do damage or trigger hit events here —
+    // authoritative damage rides on the 'hit' echo from the server.
+    // They just render and fade on their own.
+    if (fb.remoteVisual) {
+      if (fb.life <= 0) {
+        if (mesh) scene.remove(mesh);
+        fireballMeshes.delete(fb.id);
+        fireballs.splice(i, 1);
+      }
+      continue;
+    }
+
     // Hit pirates — fireballs are the primary anti-pirate weapon, hit hard (5x normal)
     for (const pirate of pirates) {
       if (!pirate.emerged || pirate.diving) continue;
