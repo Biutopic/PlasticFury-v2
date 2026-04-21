@@ -33,6 +33,14 @@ type Seat =
       z: number;
       rot: number;
       boosting: boolean; // fresh every boat message; drives turbo-smoke fx
+      // Shared, server-authoritative health. Damage events route
+      // through the room so both the attacker and victim see the
+      // same result.
+      health: number;
+      maxHealth: number;
+      // Invulnerability window after a hit (epoch ms) — server rejects
+      // additional damage before this to match the client's INVULN_AFTER_HIT.
+      invulnUntil: number;
     }
   | { kind: "bot"; name: string; color: string };
 
@@ -63,6 +71,8 @@ const PLAYING_MS       = 180_000; // 3 minutes
 const RECAP_MS         = 15_000;
 const TICK_MS          = 50;      // 20 Hz. Full state on changes only; poses compact.
 const MIN_HUMANS_TO_START = 2;    // solo lobby never advances: use "Play offline" on the client
+const MAX_HEALTH_SERVER   = 100;  // match client MAX_HEALTH
+const HIT_INVULN_MS       = 700;  // match client INVULN_AFTER_HIT (0.7s)
 
 const COLORS    = ["#ff5a3c", "#ffd93d", "#4ade80", "#22d3ee"];
 
@@ -156,7 +166,7 @@ export default class TrashureRoom implements Party.Server {
     }
     // Color is stable per seat index so the lobby grid doesn't reshuffle.
     const color = COLORS[idx % COLORS.length];
-    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0, boosting: false };
+    this.state.seats[idx] = { kind: "human", id: conn.id, pid, name: "Capitaine", ready: false, color, lastSeenAt: Date.now(), x: 0, z: 0, rot: 0, boosting: false, health: MAX_HEALTH_SERVER, maxHealth: MAX_HEALTH_SERVER, invulnUntil: 0 };
     this.startTicker();
     this.broadcastState();
   }
@@ -181,6 +191,47 @@ export default class TrashureRoom implements Party.Server {
         seat.x = x; seat.z = z; seat.rot = r;
       }
       seat.boosting = !!data.b;
+      return;
+    }
+
+    // Hit event: an attacker client detected a ram / fireball landing
+    // on a remote-driven slot. We validate server-side (invuln window,
+    // target alive, target is actually a human), deduct health, and
+    // fan the event out so every client plays the hit vignette.
+    if (data.type === "hit") {
+      const targetIdx = data.target | 0;
+      const dmg = Math.max(0, Math.min(100, Number(data.dmg) || 0));
+      const source = String(data.source || "unknown").slice(0, 16);
+      if (targetIdx < 0 || targetIdx >= this.state.seats.length) return;
+      const target = this.state.seats[targetIdx];
+      if (!target || target.kind !== "human") return;
+      const attackerSeat = this.findSeatByConn(conn.id);
+      // Don't let a client hit itself (sanity against bugs/cheats).
+      if (attackerSeat && attackerSeat === target) return;
+      const nowMs = Date.now();
+      if (nowMs < target.invulnUntil) return;
+      target.health = Math.max(0, target.health - dmg);
+      target.invulnUntil = nowMs + HIT_INVULN_MS;
+      const attackerIdx = attackerSeat && attackerSeat.kind === "human"
+        ? this.state.seats.indexOf(attackerSeat)
+        : -1;
+      this.room.broadcast(JSON.stringify({
+        type: "hit",
+        target: targetIdx,
+        attacker: attackerIdx,
+        dmg,
+        source,
+        health: target.health,
+      }));
+      // If the victim is now sunk, broadcast a respawn notice so every
+      // client plays the sink effect and resets health to max.
+      if (target.health <= 0) {
+        target.health = target.maxHealth;
+        this.room.broadcast(JSON.stringify({
+          type: "sink",
+          target: targetIdx,
+        }));
+      }
       return;
     }
 
@@ -313,7 +364,7 @@ export default class TrashureRoom implements Party.Server {
   // takeover) to keep the wire quiet.
   private broadcastIfPlaying() {
     if (this.state.phase !== "PLAYING") return;
-    const poses: Array<{ i: number; x: number; z: number; r: number; b?: 1 }> = [];
+    const poses: Array<any> = [];
     for (let i = 0; i < this.state.seats.length; i++) {
       const s = this.state.seats[i];
       if (s.kind === "human") {
@@ -322,8 +373,9 @@ export default class TrashureRoom implements Party.Server {
           x: Math.round(s.x * 100) / 100,
           z: Math.round(s.z * 100) / 100,
           r: Math.round(s.rot * 1000) / 1000,
+          h: s.health | 0, // 0..100
         };
-        if (s.boosting) p.b = 1; // only sent when truthy to keep payload small
+        if (s.boosting) p.b = 1;
         poses.push(p);
       }
     }

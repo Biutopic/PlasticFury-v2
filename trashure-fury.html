@@ -4041,21 +4041,28 @@ function applyCollision(a, b, now) {
     // Boosting winner deals heavy damage. NO plastic loss, NO HP
     // transfer — collisions just hurt the loser. Winner neither heals
     // nor gains cargo. Pure damage trade.
-    loser.health -= dmg;
-    loser.lastHitTime = now;
+    if (!_mpTrySendHit(loser, dmg, 'ram')) {
+      loser.health -= dmg;
+      loser.lastHitTime = now;
+      if (loser.id === 'local') triggerHitEffect();
+    }
     events.push({ id: 'ce_' + (collisionIdCounter++), x: loser.x, z: loser.z, text: '-' + dmg + ' HP', color: '#ff4444', time: now, victimId: loser.id });
-    if (loser.id === 'local') triggerHitEffect();
   } else {
     // No boost: BOTH boats take damage, attacker takes more for being reckless
     const selfDmg = Math.floor(dmg * 0.7);
     const otherDmg = Math.floor(dmg * 0.4);
-    winner.health -= selfDmg;
-    winner.lastHitTime = now;
-    loser.health -= otherDmg;
-    loser.lastHitTime = now;
+    if (!_mpTrySendHit(winner, selfDmg, 'ram')) {
+      winner.health -= selfDmg;
+      winner.lastHitTime = now;
+      if (winner.id === 'local') triggerHitEffect();
+    }
+    if (!_mpTrySendHit(loser, otherDmg, 'ram')) {
+      loser.health -= otherDmg;
+      loser.lastHitTime = now;
+      if (loser.id === 'local') triggerHitEffect();
+    }
     events.push({ id: 'ce_' + (collisionIdCounter++), x: winner.x, z: winner.z, text: '-' + selfDmg + ' HP', color: '#ff4444', time: now, victimId: winner.id });
     events.push({ id: 'ce_' + (collisionIdCounter++), x: loser.x, z: loser.z, text: '-' + otherDmg + ' HP', color: '#ff4444', time: now, victimId: loser.id });
-    if (winner.id === 'local' || loser.id === 'local') triggerHitEffect();
   }
   return events;
 }
@@ -5398,15 +5405,22 @@ function updateFireballs(dt, now) {
         const dx = fb.x - p.x, dz = fb.z - p.z;
         if (dx * dx + dz * dz < (fb.blastRadius + 2) * (fb.blastRadius + 2)) {
           const dmg = Math.round(fb.damage * 0.6);
-          p.health -= dmg;
-          p.lastHitTime = now;
+          // If the victim is a remote human's bot slot, route the
+          // damage through the server instead of applying locally.
+          // The server echo will update displayed health + trigger
+          // the victim's hit vignette on their client.
+          const rerouted = _mpTrySendHit(p, dmg, 'fire');
+          if (!rerouted) {
+            p.health -= dmg;
+            p.lastHitTime = now;
+            if (p.id === 'local') triggerHitEffect();
+          }
           events.push({
             id: 'fbe_' + (collisionIdCounter++),
             x: p.x, z: p.z,
             text: '-' + dmg + ' FEU',
             color: '#ff6600', time: now, victimId: p.id, attackerId: fb.shooterId,
           });
-          if (p.id === 'local') triggerHitEffect();
           hit = true;
           break;
         }
@@ -12177,6 +12191,8 @@ function gameLoop(timestamp) {
       else                    _mpHiddenBotIds.add(rivals[i].id);
     }
   }
+  // Publish the mapping so _mpTrySendHit can consult it from anywhere.
+  _mp._remoteByBotId = _mpRemoteByBotId;
 
   // ---- BOTS ----
   for (const bot of bots) {
@@ -12235,6 +12251,12 @@ function gameLoop(timestamp) {
       }
       bot.name = _mpRemote.name || bot.name;
       bot.isBoosting = !!_mpRemote.boosting;
+      // Server-authoritative health shows up on the player label above
+      // the remote captain's boat.
+      if (typeof _mpRemote.health === 'number') {
+        bot.health = _mpRemote.health;
+        bot.maxHealth = bot.maxHealth || MAX_HEALTH || 100;
+      }
       // Boost visuals for the remote captain — chimney smoke + water
       // spray. Approximate the chimney offset from the bot's forward
       // vector; doesn't need to be pixel-perfect, just readable.
@@ -13308,6 +13330,10 @@ function _mpConnect() {
       _mpApplyState(data.state);
     } else if (data.type === 'poses' && Array.isArray(data.poses)) {
       _mpApplyPoses(data.poses);
+    } else if (data.type === 'hit') {
+      _mpApplyHit(data);
+    } else if (data.type === 'sink') {
+      _mpApplySink(data);
     }
   });
   _mp.ws.addEventListener('close', () => {
@@ -13350,6 +13376,7 @@ function _mpApplyPoses(poses) {
     if (!seat || seat.kind !== 'human') continue;
     seat.x = p.x; seat.z = p.z; seat.rot = p.r;
     seat.boosting = !!p.b;
+    if (typeof p.h === 'number') seat.health = p.h;
     if (p.i === _mp.mySeatIdx) continue; // don't interpolate our own boat
     const latest = { x: p.x, z: p.z, rot: p.r, t: nowMs };
     const entry = _mp._boatSnaps.get(seat.pid);
@@ -13357,9 +13384,88 @@ function _mpApplyPoses(poses) {
     else { entry.prev = entry.next; entry.next = latest; }
     // Keep remoteBoats in sync so the game loop mapping sees fresh data.
     for (const rb of _mp.remoteBoats) {
-      if (rb.seatIdx === p.i) { rb.x = p.x; rb.z = p.z; rb.rot = p.r; rb.boosting = !!p.b; break; }
+      if (rb.seatIdx === p.i) {
+        rb.x = p.x; rb.z = p.z; rb.rot = p.r;
+        rb.boosting = !!p.b;
+        if (typeof p.h === 'number') rb.health = p.h;
+        break;
+      }
     }
   }
+}
+
+// Apply an incoming server hit broadcast. If we're the victim, damage
+// localPlayer + show the vignette. If we're the attacker or a third
+// party, update the remote bot's displayed health.
+function _mpApplyHit(data) {
+  const targetIdx = data.target | 0;
+  const dmg = Math.max(0, +data.dmg || 0);
+  const newHealth = (typeof data.health === 'number') ? (data.health | 0) : null;
+  if (targetIdx === _mp.mySeatIdx && typeof localPlayer !== 'undefined') {
+    localPlayer.health = Math.max(0, (localPlayer.health || 0) - dmg);
+    if (typeof gameTime !== 'undefined') localPlayer.lastHitTime = gameTime;
+    try { if (typeof triggerHitEffect === 'function') triggerHitEffect(); } catch (e) {}
+  }
+  // Keep the remote bot's rendered health matched to server truth.
+  if (newHealth !== null && Array.isArray(_mp.remoteBoats)) {
+    for (const rb of _mp.remoteBoats) {
+      if (rb.seatIdx === targetIdx) { rb.health = newHealth; break; }
+    }
+    // Propagate to the local bot slot currently driven by this seat, if any.
+    if (_mp._remoteByBotId) {
+      for (const [botId, rb] of _mp._remoteByBotId.entries()) {
+        if (rb.seatIdx === targetIdx) {
+          const bot = (typeof bots !== 'undefined') && bots.find((b) => b.id === botId);
+          if (bot) bot.health = newHealth;
+        }
+      }
+    }
+  }
+}
+
+// Victim sunk: respawn locally if we're the one sunk.
+function _mpApplySink(data) {
+  const targetIdx = data.target | 0;
+  if (targetIdx === _mp.mySeatIdx && typeof localPlayer !== 'undefined') {
+    // Use the existing death path if available — otherwise do a
+    // light local respawn (heal + random reposition).
+    try {
+      if (typeof handleDeath === 'function') handleDeath(localPlayer);
+      else localPlayer.health = (typeof MAX_HEALTH !== 'undefined') ? MAX_HEALTH : 100;
+    } catch (e) {
+      localPlayer.health = (typeof MAX_HEALTH !== 'undefined') ? MAX_HEALTH : 100;
+    }
+  }
+}
+
+// Router for a local-detected hit against a remote-human bot slot. If
+// the victim is one of the remote humans, we send a hit message to
+// the server (which is authoritative) and return true so the caller
+// skips the local damage application. Otherwise return false and the
+// caller can damage normally (pirates, bots, etc.).
+function _mpTrySendHit(victim, dmg, source) {
+  if (!victim || !_mp || !_mp.ws || _mp.ws.readyState !== WebSocket.OPEN) return false;
+  if (!_mp.roundLaunched) return false;
+  if (!_mp.remoteBoats || _mp.remoteBoats.length === 0) return false;
+  // victim may be the localPlayer (e.g. pirate hits me) — those never route.
+  if (!victim.id || victim.id === 'local') return false;
+  // Find which seat this bot represents, if any.
+  for (const rb of _mp.remoteBoats) {
+    // The local rival-bot slot whose index matches rb.seatIdx is the
+    // one driven by this remote human. Compare by bot id via the
+    // same mapping the game loop uses.
+    if (_mp._remoteByBotId && _mp._remoteByBotId.get(victim.id) === rb) {
+      try {
+        _mp.ws.send(JSON.stringify({
+          type: 'hit', target: rb.seatIdx,
+          dmg: Math.max(0, Math.round(dmg)),
+          source: String(source || 'unknown').slice(0, 16),
+        }));
+      } catch (e) {}
+      return true;
+    }
+  }
+  return false;
 }
 
 function _mpApplyState(state) {
