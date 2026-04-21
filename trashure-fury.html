@@ -4294,9 +4294,14 @@ function handleDeath(player) {
   // every captain can see + scoop. Local spawn is skipped.
   const _mpActiveDeath = !!(_mp && _mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched);
   if (_mpActiveDeath && player.id === 'local') {
-    if (itemCount > 0) {
-      try { _mp.ws.send(JSON.stringify({ type: 'sink_drop', pts: itemCount })); } catch (e) {}
-    }
+    // Tell the server our current plastic total; it'll spawn ~25% of
+    // it as big 5-point pieces at the death point.
+    try {
+      _mp.ws.send(JSON.stringify({
+        type: 'sink_drop',
+        score: (player.totalCollected | 0),
+      }));
+    } catch (e) {}
     // Ask the server for a fresh garbage snapshot after the
     // respawn settles. If anything drifted during the death →
     // scene-rebuild window, the snapshot reset wipes the local
@@ -13645,12 +13650,17 @@ function _mpApplyFire(data) {
 // and respawn deletions go through matching helpers that also tear
 // down the rendered mesh.
 function _mpBuildGarbageFromServer(item) {
-  // item: { id, x, z, k }
+  // item: { id, x, z, k, p? }
   let fbxIdx = -1, size = 'medium', points = 1;
   if (typeof garbageFBXLoaded !== 'undefined' && garbageFBXLoaded && garbageFBXMeshes && garbageFBXMeshes.length > 0) {
     fbxIdx = Math.floor(Math.random() * garbageFBXMeshes.length);
     size   = garbageFBXMeshes[fbxIdx].size;
     points = garbageFBXMeshes[fbxIdx].points;
+  }
+  // Server-authoritative points override (death-drop pieces are 5).
+  if (typeof item.p === 'number' && item.p > 1) {
+    points = item.p | 0;
+    size   = 'large';
   }
   return {
     id: 'gs_' + item.id,          // client id prefixed for mesh registry uniqueness
@@ -13707,10 +13717,13 @@ function _mpApplyGarbagePick(data) {
     const gx = g.x, gz = g.z, isHeal = g.isHeal;
     try { removeGarbageMesh(g.id); } catch (e) {}
     garbage.splice(i, 1);
-    // Nice local feedback: floating "+1" at the pickup point, pitched
-    // pickup sfx if we were the one who got it.
+    // Nice local feedback: floating "+N" at the pickup point, pitched
+    // pickup sfx if we were the one who got it. Server echoes the
+    // piece's actual point value in data.p (1 for normal, 5 for
+    // death-drop nuggets).
+    const pts = (typeof data.p === 'number' && data.p > 0) ? (data.p | 0) : 1;
     if (typeof spawnFloatingText === 'function') {
-      spawnFloatingText(gx, gz, isHeal ? '+HP' : '+1', isHeal ? '#ff66aa' : '#ffd93d');
+      spawnFloatingText(gx, gz, isHeal ? '+HP' : ('+' + pts), isHeal ? '#ff66aa' : '#ffd93d');
     }
     if (seatIdx === _mp.mySeatIdx && typeof sfx !== 'undefined') {
       try { sfx.pickup(1); } catch (e) {}
