@@ -13462,6 +13462,12 @@ function _mpApplyPoses(poses) {
         rb.boosting = !!p.b;
         if (typeof p.h === 'number') rb.health = p.h;
         if (typeof p.s === 'number') rb.score = p.s;
+        // Name lives on the full-state seat record; poses don't carry
+        // it. Refresh from the cached seat so late-arrival name
+        // suffix renames (e.g. "Capitaine_2" after a collision) land
+        // on the floating label immediately instead of waiting for
+        // the next full-state broadcast.
+        if (seat.name) rb.name = seat.name;
         break;
       }
     }
@@ -13718,6 +13724,9 @@ function _mpApplyState(state) {
   _mp.remoteBoats = others;
   _mpRenderSeats();
   _mpRenderPhase();
+  // Push the countdown display synchronously so READY → visible
+  // timer happens in the same frame as the server ack.
+  if (typeof _mpRenderTimer === 'function') _mpRenderTimer();
   // Launch the local round when the server is in PLAYING and we have
   // a human seat. This handles both the clean path (we were in the
   // lobby, countdown fired, now PLAYING) and the mid-round join path
@@ -13771,29 +13780,27 @@ function _mpEscape(s) {
   }[c]));
 }
 
-// Countdown ticker — re-reads phaseEndsAt each frame so the visible
-// number matches the server even across reconnects.
+// Countdown ticker. Uses a plain setInterval (not rAF) so the timer
+// keeps counting down in backgrounded browser tabs. Re-reads
+// phaseEndsAt each tick so it matches the server even after reconnects.
+function _mpRenderTimer() {
+  if (!_mp.wrEl || !_mp.wrTimer) return;
+  if (!_mp.wrEl.classList.contains('active')) return;
+  if (!_mp.phaseEndsAt || _mp.phaseEndsAt <= 0) {
+    _mp.wrTimer.textContent = '\u2014:\u2014';
+    _mp.wrTimer.style.opacity = '0.35';
+    return;
+  }
+  const left = Math.max(0, Math.round((_mp.phaseEndsAt - Date.now()) / 1000));
+  const mm = Math.floor(left / 60);
+  const ss = left % 60;
+  _mp.wrTimer.textContent = mm + ':' + String(ss).padStart(2, '0');
+  _mp.wrTimer.style.opacity = '1';
+}
 function _mpStartTickingTimer() {
-  const tick = () => {
-    if (!_mp.wrEl || !_mp.wrEl.classList.contains('active')) {
-      return requestAnimationFrame(tick);
-    }
-    if (_mp.wrTimer) {
-      if (!_mp.phaseEndsAt || _mp.phaseEndsAt <= 0) {
-        // No countdown armed — show a dim placeholder instead of 0:00.
-        _mp.wrTimer.textContent = '\u2014:\u2014';
-        _mp.wrTimer.style.opacity = '0.35';
-      } else {
-        const left = Math.max(0, Math.round((_mp.phaseEndsAt - Date.now()) / 1000));
-        const mm = Math.floor(left / 60);
-        const ss = left % 60;
-        _mp.wrTimer.textContent = mm + ':' + String(ss).padStart(2, '0');
-        _mp.wrTimer.style.opacity = '1';
-      }
-    }
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
+  if (_mp._timerInterval) clearInterval(_mp._timerInterval);
+  _mp._timerInterval = setInterval(_mpRenderTimer, 250);
+  _mpRenderTimer();
 }
 
 function _mpHumanCount() {
