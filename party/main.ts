@@ -633,6 +633,37 @@ export default class TrashureRoom implements Party.Server {
       return;
     }
 
+    // Sink notification: the sinking player's client tells us how
+    // much plastic to scatter around the death point. We spawn them
+    // as real shared garbage pieces so any captain (including the
+    // sinker once they respawn) can scoop them. Also drops the
+    // sinker's score by the same amount.
+    if (data.type === "sink_drop" && seat?.kind === "human") {
+      const pts = Math.max(0, Math.min(50, Number(data.pts) || 0));
+      if (pts === 0) return;
+      // Clamp drop count + position jitter so we don't blow past the
+      // garbage cap (extras beyond MAX_GARBAGE are silently skipped).
+      const items: Array<{ id: number; x: number; z: number; k: 0 | 1 }> = [];
+      for (let i = 0; i < pts && this.garbage.length < MAX_GARBAGE; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 2 + Math.random() * 6;
+        const g: Garbage = {
+          id: this.garbageNextId++,
+          x: Math.round((seat.x + Math.cos(a) * r) * 100) / 100,
+          z: Math.round((seat.z + Math.sin(a) * r) * 100) / 100,
+          kind: 0,
+          claimed: false,
+        };
+        this.garbage.push(g);
+        items.push({ id: g.id, x: g.x, z: g.z, k: 0 });
+      }
+      if (items.length) {
+        this.room.broadcast(JSON.stringify({ type: "g_add", items }));
+      }
+      seat.score = Math.max(0, seat.score - pts);
+      return;
+    }
+
     // Pirate hit: attacker client detected a fireball/ram landing on
     // a shared pirate. Validate distance + pirate alive, deduct HP,
     // broadcast echo. If HP <= 0, broadcast p_kill so every client

@@ -4289,12 +4289,15 @@ function handleDeath(player) {
   const itemCount = Math.max(3, Math.min(plasticToDrop, 15));
   const pointsPerItem = Math.max(1, Math.ceil(plasticToDrop / itemCount));
 
-  // In MP, the server owns the garbage field. Spawning local pickups
-  // on death fills the ocean with client-only junk that the other
-  // captain never sees — and which never gets claimed because the
-  // server doesn't know about it. Skip the spawn in MP; the score
-  // drop below still applies.
+  // In MP, the server owns the garbage field. We tell the server
+  // how much plastic to drop and it spawns real shared pieces that
+  // every captain can see + scoop. Local spawn is skipped.
   const _mpActiveDeath = !!(_mp && _mp.ws && _mp.ws.readyState === WebSocket.OPEN && _mp.roundLaunched);
+  if (_mpActiveDeath && player.id === 'local' && itemCount > 0) {
+    try {
+      _mp.ws.send(JSON.stringify({ type: 'sink_drop', pts: itemCount }));
+    } catch (e) {}
+  }
   if (!_mpActiveDeath) {
     for (let i = 0; i < itemCount; i++) {
       const a = Math.random() * Math.PI * 2;
