@@ -14158,15 +14158,13 @@ window._beginSolo = beginSolo;
 // The original local-only startup path. We keep it as-is and wrap it
 // in beginGame() which routes through the lobby first.
 function _beginLocalRound() {
-  // The cross-round reload now happens on the RECAP → LOBBY transition
-  // in _mpApplyState so the game has finished loading by the time
-  // PLAYING starts. If we somehow got here mid-game anyway, bail to a
-  // reload as a safety net.
-  if (typeof gameStarted !== 'undefined' && gameStarted) {
-    try { if (_mp.ws) _mp.ws.close(); } catch (e) {}
-    location.reload();
-    return;
-  }
+  // Always-on world: if the round is already running (gameStarted),
+  // bail silently. The pre-always-on build used to location.reload()
+  // here as a "clean slate" shortcut between rounds, but that hard
+  // drop kicks the player back to the start menu — which is exactly
+  // the bug players saw when a stray re-entry fired after beginGame().
+  // Duplicate calls are now an idempotent no-op.
+  if (typeof gameStarted !== 'undefined' && gameStarted) return;
   localPlayer.name = nameInput.value.trim() || 'Capitaine';
   // In online multiplayer, put each player at a unique spawn corner
   // keyed off their seat index so boats don't stack on top of each
