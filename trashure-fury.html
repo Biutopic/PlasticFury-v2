@@ -12486,7 +12486,17 @@ function gameLoop(timestamp) {
         }
       }
     }
-    movePlayer(bot, bi, dt * (_dda.botSpeedMul || 1), botUpg);
+    // Skip local movement for MP remote-human slots — bot.x/z/rotation
+    // are already set every frame from the snapshot-interpolated server
+    // pose above. Running movePlayer() on top would apply the local AI
+    // input over the remote pose, causing stutter/rubber-banding that
+    // looks exactly like the "laggy remote boat" bug we chased before.
+    // Whale/Hydro still need movePlayer for their own scripted motion.
+    if (_mpRemote && !bot.isWhale && !bot.isHydro) {
+      // no-op: rendered at the interpolated server position
+    } else {
+      movePlayer(bot, bi, dt * (_dda.botSpeedMul || 1), botUpg);
+    }
     // Whale: update animation mixer + skip garbage/upgrades/death
     if (bot.isWhale) {
       if (whaleMixer) whaleMixer.update(dt);
