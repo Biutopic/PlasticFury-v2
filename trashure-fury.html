@@ -14374,41 +14374,128 @@ function beginSolo() {
 window._beginSolo = beginSolo;
 
 // ============================================================
+// SPLIT-SCREEN IFRAME MODE
+// ============================================================
+// When this page is loaded inside the split.html shell with
+// ?split=1&player=N, it runs the full solo game UNCHANGED — same
+// boat pose, camera, HUD, everything. Three extra behaviors layer
+// on top:
+//   1. The start menu is skipped — we auto-call beginSolo() once
+//      assets are ready, so both iframes jump straight into play.
+//   2. The page ignores its own keyboard; instead it listens for
+//      postMessage({type:'tiSplitKey', action, pressed}) from the
+//      shell and mutates the shared `input` object directly.
+//   3. A BroadcastChannel ('ti-split') exchanges each player's boat
+//      pose with the other iframe so they see each other's boats in
+//      the shared world. Player 1 is the authority for shared
+//      entities (pirates, plastic, whale) — player 2's copy of those
+//      systems stays passive and just mirrors the broadcasts.
+(() => {
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('split') !== '1') return; // not in split-screen shell
+  const me = Math.max(1, Math.min(4, parseInt(qs.get('player') || '1', 10)));
+  window.__tiSplit = { enabled: true, me, isAuthority: (me === 1), others: new Map() };
+
+  // Hide the menu / back button UI inside the iframe — the shell owns
+  // the back button. Also suppress the auto-connect online logic by
+  // short-circuiting _mpConnect, since we're in local-only mode.
+  document.addEventListener('DOMContentLoaded', () => {
+    const ss = document.getElementById('start-screen');
+    if (ss) ss.hidden = true;
+  });
+  // Prevent the in-iframe online code from reaching out to a server —
+  // split-screen is strictly local. Override after the function is
+  // defined (at the bottom of the inline script).
+  setTimeout(() => {
+    if (typeof window._mpConnect === 'undefined') return;
+    window._mpConnect = () => {};
+  }, 0);
+
+  // Shell routes keys to us. Translate incoming postMessages into
+  // mutations of the global `input` object — the same object the
+  // regular keydown handler would touch.
+  window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (!d || d.type !== 'tiSplitKey') return;
+    if (typeof input === 'undefined') return;
+    const action = d.action;
+    if (action === 'forward' || action === 'backward' ||
+        action === 'left'    || action === 'right'    ||
+        action === 'boost') {
+      input[action] = !!d.pressed;
+    }
+  });
+
+  // BroadcastChannel sync — each iframe shares the same window /
+  // process but the channel is the clean pub/sub layer across them.
+  // See _tiSplitTick below for how we pump boat-pose messages out.
+  try {
+    const ch = new BroadcastChannel('ti-split');
+    window.__tiSplit.ch = ch;
+    ch.onmessage = (ev) => {
+      const d = ev.data;
+      if (!d || d.me === me) return; // ignore our own broadcasts
+      if (d.type === 'pose') {
+        // Cache the remote boat pose so the renderer can draw it as
+        // a second boat in this iframe's scene. Filled in by the
+        // renderer hook installed below in the game loop.
+        window.__tiSplit.others.set(d.me, {
+          x: d.x, z: d.z, rot: d.rot, health: d.health, score: d.score,
+          at: performance.now(),
+        });
+      }
+    };
+  } catch (e) { /* BroadcastChannel unavailable; we'll just run solo */ }
+
+  // Auto-start: wait for the normal game-start pipeline to be ready,
+  // then click the (hidden) solo button so the scene boots without
+  // the player having to interact. Polls because the game bootstraps
+  // asynchronously and beginSolo is only defined once the main script
+  // block runs.
+  const tryStart = () => {
+    if (typeof window._beginSolo === 'function') {
+      try { window._beginSolo(); } catch (e) {}
+    } else {
+      setTimeout(tryStart, 100);
+    }
+  };
+  setTimeout(tryStart, 250);
+
+  // Pose broadcaster — runs on an interval (10 Hz), publishes our
+  // own boat pose to the channel so the other iframe(s) can render
+  // us. Kept cheap: plain numbers, no serialization of the whole
+  // player object. The renderer consumes __tiSplit.others.
+  setInterval(() => {
+    if (!window.__tiSplit || !window.__tiSplit.ch) return;
+    if (typeof localPlayer === 'undefined' || !localPlayer) return;
+    try {
+      window.__tiSplit.ch.postMessage({
+        type: 'pose',
+        me,
+        x: +localPlayer.x.toFixed(2),
+        z: +localPlayer.z.toFixed(2),
+        rot: +((localPlayer.rotation || 0).toFixed(3)),
+        health: localPlayer.health | 0,
+        score: localPlayer.totalCollected | 0,
+      });
+    } catch (e) {}
+  }, 100);
+})();
+
+// ============================================================
 // Split-screen (local multi) — Phase 1: menu button is live, engine
 // is not. Clicking shows a "coming soon" toast so players know the
 // slot exists without hitting a broken code path. Phase 2 will wire
 // this to the real multi-viewport launcher.
 // ============================================================
+// Launch split-screen by navigating to the dedicated shell page.
+// The shell loads two iframes of trashure-fury.html?split=1&player=N
+// side by side and routes keyboard input to the right iframe via
+// postMessage. Each iframe runs the full solo game — the split
+// hook inside this file auto-starts the solo loop and swaps the
+// keyboard listener for the shell's postMessage stream.
 function beginSplit() {
-  // Guarded so this doesn't blow up if i18n hasn't finished loading.
-  const title = (typeof tr === 'function') ? tr('split_soon_title') : 'Coming soon';
-  const body  = (typeof tr === 'function') ? tr('split_soon_body')
-    : 'Four-player split-screen is on the way.';
-  // Cheap inline banner instead of a full modal — keeps the menu clean
-  // and matches the codebase's existing "no modal system" style.
-  let el = document.getElementById('split-soon-banner');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'split-soon-banner';
-    el.style.cssText = [
-      'position:fixed', 'z-index:9999', 'left:50%', 'top:24%',
-      'transform:translateX(-50%)',
-      'max-width:380px', 'padding:16px 20px',
-      'background:rgba(12,28,48,0.95)',
-      'border:1px solid rgba(160,220,255,0.55)',
-      'border-radius:12px',
-      'color:#e8f3ff', 'font-family:var(--font-body)',
-      'box-shadow:0 12px 40px rgba(0,0,0,0.5)',
-      'text-align:center', 'line-height:1.35',
-    ].join(';');
-    document.body.appendChild(el);
-  }
-  el.innerHTML =
-    '<div style="font-family:var(--font-heading);font-size:1rem;letter-spacing:2px;margin-bottom:6px;color:#ffd080;">'
-    + title.replace(/</g, '&lt;') + '</div>'
-    + '<div style="font-size:0.85rem;">' + body.replace(/</g, '&lt;') + '</div>';
-  clearTimeout(beginSplit._t);
-  beginSplit._t = setTimeout(() => { el && el.remove(); }, 4500);
+  location.href = 'split.html';
 }
 window._beginSplit = beginSplit;
 

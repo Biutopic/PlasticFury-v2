@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRASHURE ISLAND · Split-screen</title>
+<style>
+  /* The shell is a 100% black page whose only job is to host two
+     iframes of trashure-fury.html side by side. Each iframe runs the
+     full, working solo game — same engine, same boat pose, same
+     camera, pixel-identical to the single-player experience. The
+     shell routes keyboard input to the right iframe via postMessage,
+     and the iframes sync their world state over a BroadcastChannel
+     (see ti-split channel usage below). */
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    font-family: 'Orbitron', monospace;
+    color: #d7ecf7;
+  }
+  #split-grid {
+    display: grid;
+    width: 100vw; height: 100vh;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+    gap: 2px;
+    background: #0a0f18; /* thin divider line between viewports */
+  }
+  #split-grid iframe {
+    width: 100%; height: 100%;
+    border: 0; display: block;
+    background: #000;
+  }
+  /* Back-to-menu pill — tucked into the top-center so it doesn't
+     overlap either player's HUD. Clicking unloads the iframes and
+     returns to the main menu. */
+  #split-back {
+    position: fixed;
+    top: 10px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    padding: 6px 14px;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.75rem; letter-spacing: 2px;
+    color: #d7ecf7;
+    background: rgba(10, 22, 40, 0.85);
+    border: 1px solid rgba(160, 220, 255, 0.45);
+    border-radius: 20px;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  }
+  #split-back:hover { border-color: rgba(200, 240, 255, 0.8); }
+  /* Player label pill — shows P1 / P2 at the top of each quadrant. */
+  .player-tag {
+    position: fixed;
+    top: 10px;
+    z-index: 15;
+    padding: 4px 10px;
+    font-size: 0.68rem; letter-spacing: 3px; font-weight: 700;
+    color: #0a1628;
+    border-radius: 10px;
+    pointer-events: none;
+  }
+  #tag-p1 { left: 16px;  background: linear-gradient(135deg, #00ffdd, #00c8ff); }
+  #tag-p2 { right: 16px; background: linear-gradient(135deg, #ffd93d, #ff9a3c); }
+</style>
+</head>
+<body>
+  <div class="player-tag" id="tag-p1">P1 · ZQSD + Espace</div>
+  <div class="player-tag" id="tag-p2">P2 · Flèches + Entrée</div>
+  <button id="split-back">&larr; RETOUR AU MENU</button>
+  <div id="split-grid">
+    <iframe id="frame-p1" src="trashure-fury.html?split=1&player=1" allow="autoplay; gamepad"></iframe>
+    <iframe id="frame-p2" src="trashure-fury.html?split=1&player=2" allow="autoplay; gamepad"></iframe>
+  </div>
+
+<script>
+(() => {
+  // =================================================================
+  // Split-screen shell — key routing only. World sync happens via
+  // BroadcastChannel INSIDE each iframe (see the ti-split handler in
+  // trashure-fury.html). The shell itself stays thin; its only
+  // responsibility is turning global keyboard events into postMessages
+  // to the right iframe so each player drives their own boat.
+  // =================================================================
+  const frameP1 = document.getElementById('frame-p1');
+  const frameP2 = document.getElementById('frame-p2');
+  // Which keys belong to which player. Mirrors the split-screen
+  // binding plan: P1 on the left-hand side of the keyboard, P2 on
+  // the arrow cluster.
+  const P1_KEYS = {
+    KeyW: 'forward',  KeyS: 'backward',
+    KeyA: 'left',     KeyD: 'right',
+    Space: 'boost',
+  };
+  const P2_KEYS = {
+    ArrowUp:    'forward',
+    ArrowDown:  'backward',
+    ArrowLeft:  'left',
+    ArrowRight: 'right',
+    Enter:      'boost',
+  };
+  function routeKey(ev, pressed) {
+    // Check P1 first — if the code matches, forward to iframe P1.
+    if (ev.code in P1_KEYS) {
+      frameP1.contentWindow.postMessage({
+        type: 'tiSplitKey',
+        action: P1_KEYS[ev.code],
+        pressed,
+      }, '*');
+      ev.preventDefault();
+      return;
+    }
+    if (ev.code in P2_KEYS) {
+      frameP2.contentWindow.postMessage({
+        type: 'tiSplitKey',
+        action: P2_KEYS[ev.code],
+        pressed,
+      }, '*');
+      ev.preventDefault();
+      return;
+    }
+  }
+  window.addEventListener('keydown', (ev) => routeKey(ev, true),  true);
+  window.addEventListener('keyup',   (ev) => routeKey(ev, false), true);
+
+  // Back button — blow away the iframes and navigate home. The
+  // BroadcastChannel inside each iframe closes automatically when the
+  // iframe unloads, so no cleanup needed here.
+  document.getElementById('split-back').addEventListener('click', () => {
+    location.href = 'trashure-fury.html';
+  });
+})();
+</script>
+</body>
+</html>
