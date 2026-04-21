@@ -1960,7 +1960,7 @@
     <div class="science-insight" id="science-insight"></div>
   </div>
 
-  <button class="gameover-btn" id="gameover-btn" data-i18n="go_replay" onclick="window.location.reload()">REJOUER</button>
+  <button class="gameover-btn" id="gameover-btn" data-i18n="go_replay" onclick="window._rejoinSession && window._rejoinSession()">REJOUER</button>
 </div>
 
 <script type="importmap">
@@ -10040,8 +10040,12 @@ function showGameOver() {
   overlay.classList.add('active');
 }
 
+// Legacy "REJOUER" button — now calls the soft rejoin (new server
+// session entry, no page reload). The inline onclick in the markup
+// dispatches to window._rejoinSession; this listener is a safety net
+// in case the inline attribute gets stripped.
 document.getElementById('gameover-btn').addEventListener('click', () => {
-  window.location.reload();
+  if (typeof window._rejoinSession === 'function') window._rejoinSession();
 });
 
 // ============================================================
@@ -14154,6 +14158,54 @@ function beginSolo() {
   _beginLocalRound();
 }
 window._beginSolo = beginSolo;
+
+// ============================================================
+// Soft rejoin — restart a personal 3-min session without reloading.
+// Triggered by the gameover overlay's "REJOUER" button and fired
+// automatically on session_end if the player wants a quick reset.
+// Tells the server to create a new SessionEntry (so the frozen old
+// entry stays visible to witnesses), then resets local race state
+// so the existing game loop can continue from a clean slate.
+// ============================================================
+function _rejoinSession() {
+  // Ask the server for a fresh session entry. Safe to call even if
+  // the WS is closed — the client continues in local-only mode.
+  try { _mpSend({ type: 'rejoin' }); } catch (e) {}
+
+  // Hide the gameover overlay so the game-screen becomes visible again.
+  const overlay = document.getElementById('gameover-overlay');
+  if (overlay) overlay.classList.remove('active');
+
+  // Fade the end-theme out; normal in-game audio resumes below.
+  try {
+    if (typeof themeEndgameAudio !== 'undefined' && themeEndgameAudio) {
+      themeEndgameAudio.pause();
+      themeEndgameAudio.currentTime = 0;
+    }
+  } catch (e) {}
+
+  // Reset race state. The game loop currently short-circuits on
+  // `gameOver`; clearing it resumes normal updates.
+  gameTime = 0;
+  gameTimeRemaining = GAME_DURATION;
+  gameOver = false;
+  _lastTimerSec = -1; // force the timer HUD to redraw on the next frame
+
+  // Reset per-player stats for the new session. The server also
+  // zeroes its own copy when it processes the rejoin message.
+  if (typeof localPlayer !== 'undefined' && localPlayer) {
+    localPlayer.totalCollected = 0;
+    localPlayer.plasticCount = 0;
+    localPlayer.health = MAX_HEALTH;
+    localPlayer.boostEnergy = 1;
+  }
+
+  // Resume ambient sound that showGameOver() stopped.
+  try { startOceanAmbient(); } catch (e) {}
+  try { startMotorLoop(); } catch (e) {}
+  try { startThemeMusic(); } catch (e) {}
+}
+window._rejoinSession = _rejoinSession;
 
 // The original local-only startup path. We keep it as-is and wrap it
 // in beginGame() which routes through the lobby first.
