@@ -14077,17 +14077,23 @@ function _mpApplyState(state) {
     const s = _mp.seats[i];
     if (s && s.kind === 'human') {
       seenPids.add(s.pid);
-      const latest = { x: +s.x || 0, z: +s.z || 0, rot: +s.rot || 0, t: nowMs };
+      // Only seed the interpolation buffer for NEW remote players
+      // (seats we haven't seen yet). State messages arrive on things
+      // like rename / session_end / join / disconnect — they carry
+      // whatever pose the server had last, which is usually older
+      // than the 10 Hz pose stream. Overwriting the buffer with that
+      // stale pose makes the remote boat jerk backward every time a
+      // state message lands, visible as a steady stutter. Let the
+      // fresh pose stream drive prev/next from here on.
       const entry = _mp._boatSnaps.get(s.pid);
       if (!entry) {
+        const latest = { x: +s.x || 0, z: +s.z || 0, rot: +s.rot || 0, t: nowMs };
         _mp._boatSnaps.set(s.pid, { prev: latest, next: latest });
-      } else {
-        // Advance the buffer: the old "next" becomes the new "prev"
-        // (starting point for this render interval), and the fresh
-        // snapshot is the new "next" target.
-        entry.prev = entry.next;
-        entry.next = latest;
       }
+      // Existing remote: leave prev/next untouched. The 10 Hz pose
+      // stream (_mpApplyPoses) is the authority for motion — pushing
+      // the state's stale pose in here made the boat jerk backward
+      // whenever a state message arrived.
       others.push({ seatIdx: i, pid: s.pid, name: s.name, color: s.color });
     }
   }
