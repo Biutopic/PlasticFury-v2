@@ -12545,11 +12545,21 @@ function gameLoop(timestamp) {
   const allPlayers = _allPlayers;
   for (const pirate of pirates) {
     // In MP the pirate is server-driven — position, rotation, HP, dive
-    // state all come from `poses`/`p_add`/`p_dmg`/`p_kill`. Running the
-    // local AI would overwrite those with a client-computed chase path,
-    // and each browser would compute a different path → every player
-    // would see the pirate in a different spot.
+    // state all come from `poses`/`p_add`/`p_dmg`/`p_kill`. We must
+    // NOT run the local AI (chase / dive / bomb / mine) because that
+    // would overwrite the server pose and desync every client. But we
+    // DO still need to resolve hull collisions against the local
+    // player (ram damage, bumper-bounce) — otherwise our boat sails
+    // straight through the pirate. Run only the ram check, skip the
+    // AI body.
     if (pirate._mpServer) {
+      if (pirate.emerged && !pirate.diving) {
+        const events = pirateRamCheck(pirate, allPlayers, gameTime);
+        for (const e of events) {
+          spawnFloatingText(e.x, e.z, e.text, e.color);
+          if (e.victimId === 'whale') hydroTelemetry.collisionsReceived++;
+        }
+      }
       if (pirate.emerged) addBoatWake(pirate.id, pirate.x, pirate.z, pirate.vx, pirate.vz, RIPPLE_PIRATE_AMP);
       continue;
     }
