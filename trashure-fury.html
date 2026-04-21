@@ -1593,10 +1593,31 @@
     /* ---- RADAR (bottom-right, marine-radar style) ---- */
     /* Online mode: hide UI overlays that distract from the multiplayer
        experience. The radar, controls hint, and Hydronaute-IA panel
-       stay for solo / split-screen where they actually help. */
+       stay for solo where they actually help. */
     body.mp-online #radar-hud,
     body.mp-online #controls-hint,
     body.mp-online #hydro-hud { display: none !important; }
+
+    /* Split-screen mode: strip the UI hard. Both players SHARE the
+       world, so the timer + leaderboard stay (single shared view at
+       the top-center / top-right). Everything else (radar, controls
+       hint, Hydro AI, REPO guide, upgrade meters, tips, combo) just
+       clutters the two viewports and gets hidden. */
+    body.split-mode #radar-hud,
+    body.split-mode #controls-hint,
+    body.split-mode #hydro-hud,
+    body.split-mode #repo-guide,
+    body.split-mode #upgrade-meter,
+    body.split-mode #fireball-meter,
+    body.split-mode #tips-display,
+    body.split-mode #combo-display,
+    body.split-mode #fireball-unlock-banner,
+    body.split-mode #fire-crosshair { display: none !important; }
+
+    /* Split-screen HUD positioning: P1 top-left, P2 top-right. Make
+       them compact so they don't block gameplay. */
+    body.split-mode #hud    { top: 14px; left: 14px;  right: auto; }
+    body.split-mode #hud-p2 { top: 14px; right: 14px; left: auto;  display: flex !important; }
     #radar-hud {
       position: fixed; bottom: 18px; right: 18px;
       width: 184px; height: 184px;
@@ -2317,6 +2338,11 @@ let splitP2Upgrades = { solar_panel: 0, speed: 0, magnet: 0, solar_panel_stacks:
 function initSplitTwoPlayer() {
   if (splitMode === '2') return;
   splitMode = '2';
+  // Body-level class lets the stylesheet strip the solo-mode UI down
+  // to just the two HUDs + timer. Every other overlay (radar, REPO,
+  // leaderboard, tips, upgrade meters) is hidden via the .split-mode
+  // selector block defined in the <style> section.
+  document.body.classList.add('split-mode');
   // Spawn P2 opposite corner from P1 for a fair start.
   const corner = SPAWN_CORNERS[2 % SPAWN_CORNERS.length] || { x: 30, z: 30 };
   splitP2 = {
@@ -2344,10 +2370,8 @@ function initSplitTwoPlayer() {
   }
   // P2 HUD (cloned from the main one, repositioned via CSS class).
   _ensureSplitHudP2();
-  // Hide the online waiting-room leaderboard column that would overlap
-  // the second HUD.
-  const lb = document.getElementById('leaderboard');
-  if (lb) lb.classList.add('split-mode');
+  // (Leaderboard stays visible in split-screen — it's shared between
+  // both players since they compete in the same world.)
 }
 
 function _ensureSplitHudP2() {
@@ -14593,9 +14617,10 @@ function beginSolo() {
   _mp.ws = null;
   if (_mp.reconnectTimer) { clearTimeout(_mp.reconnectTimer); _mp.reconnectTimer = null; }
   _mpHideWaitingRoom();
-  // Solo keeps the full HUD — drop the mp-online class so the radar,
-  // controls hint, and Hydronaute-IA panel all come back.
-  document.body.classList.remove('mp-online');
+  // Solo keeps the full HUD — drop the mp-online/split classes so the
+  // radar, controls hint, and Hydronaute-IA panel all come back, and
+  // the split-screen CSS hides reset.
+  document.body.classList.remove('mp-online', 'split-mode');
   _beginLocalRound();
 }
 window._beginSolo = beginSolo;
@@ -14745,8 +14770,10 @@ function beginGame() {
   const ss = document.getElementById('start-screen');
   if (ss) ss.hidden = true;
   // Mark the page as "online mode" so CSS can hide the solo-only
-  // HUDs (radar, controls hint, Hydronaute-IA panel). Solo + split
-  // leave this class off and keep the full HUD.
+  // HUDs (radar, controls hint, Hydronaute-IA panel). Solo leaves
+  // this class off. Also clear split-mode defensively in case the
+  // user bounced through split-screen before hitting online.
+  document.body.classList.remove('split-mode');
   document.body.classList.add('mp-online');
   _mp.roundLaunched = true;
   _mp.selfReady = false;
