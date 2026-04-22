@@ -1591,28 +1591,22 @@
 
     /* ---- BEGINNER TIPS ---- */
     /* ---- RADAR (bottom-right, marine-radar style) ---- */
-    /* Split-screen iframe mode: hide every overlay that the shell
-       already owns (single shared timer + leaderboard at the edges
-       of the outer page) or that clutters a half-width viewport. Each
-       iframe keeps its own HUD panel (health / energy / plastic),
-       its own world, and its own follow camera — nothing else. */
-    body.split-iframe #timer-display,
-    body.split-iframe #leaderboard,
-    body.split-iframe #radar-hud,
-    body.split-iframe #controls-hint,
-    body.split-iframe #hydro-hud,
-    body.split-iframe #repo-guide,
-    body.split-iframe #upgrade-progress,
-    body.split-iframe #fireball-progress,
-    body.split-iframe #tips-display,
-    body.split-iframe #combo-display,
-    body.split-iframe #fireball-unlock-banner,
-    body.split-iframe #fire-crosshair { display: none !important; }
-    /* P2 iframe: flip the HUD panel to the right edge so that, once
-       the shell places P1 on the left and P2 on the right, each
-       player's HUD hugs the outer edge of the screen (closest to
-       their own quadrant) instead of dead-center. */
-    body.split-iframe-p2 #hud { left: auto; right: 20px; }
+    /* Split-screen: strip the overlays that don't belong on a
+       half-width viewport. The two HUDs (P1 left, P2 right), the
+       timer and the leaderboard stay — everything else hides. */
+    body.split-mode #radar-hud,
+    body.split-mode #controls-hint,
+    body.split-mode #hydro-hud,
+    body.split-mode #repo-guide,
+    body.split-mode #upgrade-progress,
+    body.split-mode #fireball-progress,
+    body.split-mode #tips-display,
+    body.split-mode #combo-display,
+    body.split-mode #fireball-unlock-banner,
+    body.split-mode #fire-crosshair { display: none !important; }
+    /* P1 HUD hugs the left edge; P2 HUD hugs the right edge. */
+    body.split-mode #hud    { top: 14px; left: 14px;  right: auto; }
+    body.split-mode #hud-p2 { top: 14px; right: 14px; left: auto; display: flex !important; }
 
     #radar-hud {
       position: fixed; bottom: 18px; right: 18px;
@@ -2311,6 +2305,26 @@ let seaMineModelTemplate = null;
 const botBrains = new Map();
 
 const input = { forward: false, backward: false, left: false, right: false, boost: false, fire: false };
+
+// ============================================================
+// LOCAL SPLIT-SCREEN (Mario Kart style, same scene, two cameras)
+// ============================================================
+// splitMode === 'off' → single player, unchanged from the solo game.
+// splitMode === '2'   → two viewports, two cameras, two boats in the
+//                        SAME scene. Pirates / plastic / whale / audio
+//                        are the engine's shared instances; we never
+//                        duplicate the world. Only the per-player
+//                        state (pose, HP, input, upgrades, HUD) is
+//                        added in a parallel "splitP2.*" lane. Every
+//                        core update function keeps working for solo.
+let splitMode = 'off';
+let splitP2 = null;                 // second player object, mirrors localPlayer shape
+let splitP2Mesh = null;             // second boat mesh (cloned from fisherBoatTemplate)
+let splitP2Camera = null;           // second follow camera
+const splitP2Input = {
+  forward: false, backward: false, left: false, right: false, boost: false, fire: false,
+};
+const splitP2Upgrades = { solar_panel: 0, speed: 0, magnet: 0 };
 
 // 3D references
 let playerMesh = null;
@@ -8344,15 +8358,38 @@ const keyMap = {
   KeyD: 'right',      ArrowRight: 'right',
   Space: 'boost',
 };
+// In split-screen we split the solo keyMap so each half controls one
+// boat. P1 takes WASD + Space, P2 takes Arrows + Enter. When
+// splitMode === 'off' the arrow keys keep working as P1 aliases (so
+// solo & online feel unchanged).
+const keyMapP1Split = {
+  KeyW: 'forward', KeyS: 'backward', KeyA: 'left', KeyD: 'right', Space: 'boost',
+};
+const keyMapP2Split = {
+  ArrowUp: 'forward', ArrowDown: 'backward',
+  ArrowLeft: 'left', ArrowRight: 'right', Enter: 'boost',
+};
+// Returns { who: 'p1' | 'p2', act: <action> } or null. In solo mode
+// everything routes to p1; in split mode arrows become p2.
+function _resolveKeyBinding(code) {
+  if (splitMode === '2') {
+    if (code in keyMapP1Split) return { who: 'p1', act: keyMapP1Split[code] };
+    if (code in keyMapP2Split) return { who: 'p2', act: keyMapP2Split[code] };
+    return null;
+  }
+  return (code in keyMap) ? { who: 'p1', act: keyMap[code] } : null;
+}
 
 window.addEventListener('keydown', (e) => {
-  const act = keyMap[e.code];
-  if (act) {
-    const wasOn = input[act];
-    input[act] = true;
+  const bind = _resolveKeyBinding(e.code);
+  if (bind) {
+    const target = bind.who === 'p2' ? splitP2Input : input;
+    const actor  = bind.who === 'p2' ? splitP2     : localPlayer;
+    const wasOn  = target[bind.act];
+    target[bind.act] = true;
     // Play the whoosh the instant the player engages turbo, but only
     // if they actually have energy to burn (no sound for a dead boost).
-    if (act === 'boost' && !wasOn && localPlayer && localPlayer.boostEnergy > 0.05) {
+    if (bind.act === 'boost' && !wasOn && actor && actor.boostEnergy > 0.05) {
       try { sfx.boost(); } catch (err) {}
     }
     e.preventDefault();
@@ -8384,8 +8421,11 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
-  const act = keyMap[e.code];
-  if (act) input[act] = false;
+  const bind = _resolveKeyBinding(e.code);
+  if (bind) {
+    const target = bind.who === 'p2' ? splitP2Input : input;
+    target[bind.act] = false;
+  }
 
   // Fire release (Shift) — shoot fireball
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
@@ -11596,6 +11636,10 @@ function updateCrabIntro(dt, cdTimer) {
 function initGame() {
   if (bots.length > 0) return; // guard re-init
   playerMesh = makePlayerMesh();
+  // Split-screen P2 boat — builds from the same fisherBoatTemplate
+  // that P1 just used, with the same material deep-clone. Safe to
+  // call even if splitMode is off (it early-returns).
+  _ensureSplitP2Mesh();
   // Grab the GLTF inner group (the tug-boat template wraps the model in a
   // child with rotation.y = π and position(0,-40,0) so we pitch by adding X
   // rotation directly to it — this is the ONE object that actually transforms
@@ -11980,6 +12024,28 @@ const _allEntities = [];      // reusable array for players + pirates
 // on top of the world AND the HUD-equivalent 3D countdown text.
 function renderFrame() {
   const needOverlay = countdownActive || crabIntroGroup || (countdownSprite && countdownSprite.visible);
+  // Split-screen: render the same scene twice with two cameras into
+  // scissor-clipped halves of the canvas. P1 left, P2 right. This
+  // is the Mario-Kart-style multi-viewport path: one scene sim
+  // (same pirates / plastic / whale / audio), two camera views.
+  if (splitMode === '2' && splitP2Camera) {
+    const w = renderer.domElement.width;
+    const h = renderer.domElement.height;
+    const halfW = Math.floor(w / 2);
+    renderer.setScissorTest(true);
+    // Keep each camera's aspect matched to its viewport so the FOV
+    // doesn't look squished.
+    camera.aspect = halfW / h;
+    camera.updateProjectionMatrix();
+    splitP2Camera.aspect = (w - halfW) / h;
+    splitP2Camera.updateProjectionMatrix();
+    _renderViewport(camera,        0,      0, halfW,     h, needOverlay);
+    _renderViewport(splitP2Camera, halfW,  0, w - halfW, h, needOverlay);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    camera.layers.set(0);
+    return;
+  }
   // Pass 1: world / gameplay objects (layer 0 only). Normal auto-clear here
   // so the frame starts from a clean slate.
   camera.layers.set(0);
@@ -11996,6 +12062,24 @@ function renderFrame() {
   }
   // Restore default layer so any raycasts / utilities see the world
   camera.layers.set(0);
+}
+
+// One scissored viewport — used twice per frame in split-screen so
+// each camera clips to its own half of the canvas.
+function _renderViewport(cam, x, y, width, height, needOverlay) {
+  renderer.setViewport(x, y, width, height);
+  renderer.setScissor(x, y, width, height);
+  cam.layers.set(0);
+  renderer.autoClear = true;
+  renderer.render(scene, cam);
+  if (needOverlay) {
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    cam.layers.set(CRAB_LAYER);
+    renderer.render(scene, cam);
+    renderer.autoClear = true;
+  }
+  cam.layers.set(0);
 }
 
 function gameLoop(timestamp) {
@@ -12235,6 +12319,9 @@ function gameLoop(timestamp) {
     _gameplayInput = Object.assign({}, effInput, { forward: false, backward: false, boost: false });
   }
   const isBoosting = movePlayer(localPlayer, _gameplayInput, dt, playerUpgrades);
+  // Split-screen: tick P2 right after P1 so both see the same world
+  // state this frame.
+  if (splitMode === '2') _tickSplitPlayerTwo(dt);
   const _isAccel = !!(_gameplayInput.forward || _gameplayInput.backward);
   // Run the continuous motor loop only after ignition — before that the
   // only sound is the one-shot starter SFX.
@@ -13390,6 +13477,7 @@ function gameLoop(timestamp) {
   if (uiUpdateAcc > 0.1) {
     uiUpdateAcc = 0;
     updateHUD();
+    if (splitMode === '2') _updateSplitHudP2();
     updateLeaderboard();
     updateTimer();
   }
@@ -13462,13 +13550,6 @@ function gameLoop(timestamp) {
     }
   } else {
     if (fireCH.style.display !== 'none') fireCH.style.display = 'none';
-  }
-
-  // Split-screen: draw the other player's boat in this iframe's
-  // scene using the latest pose we received over BroadcastChannel.
-  // The mesh is created on first sight and reused every frame.
-  if (typeof _tiSplitSyncRemoteBoats === 'function') {
-    try { _tiSplitSyncRemoteBoats(); } catch (e) {}
   }
 
   // Render (two-pass: world, then crab + countdown text on top)
@@ -14404,336 +14485,151 @@ function beginSolo() {
 window._beginSolo = beginSolo;
 
 // ============================================================
-// SPLIT-SCREEN IFRAME MODE
+// Split-screen (local multi) — Mario Kart style.
 // ============================================================
-// When this page is loaded inside the split.html shell with
-// ?split=1&player=N, it runs the full solo game UNCHANGED — same
-// boat pose, camera, HUD, everything. Three extra behaviors layer
-// on top:
-//   1. The start menu is skipped — we auto-call beginSolo() once
-//      assets are ready, so both iframes jump straight into play.
-//   2. The page ignores its own keyboard; instead it listens for
-//      postMessage({type:'tiSplitKey', action, pressed}) from the
-//      shell and mutates the shared `input` object directly.
-//   3. A BroadcastChannel ('ti-split') exchanges each player's boat
-//      pose with the other iframe so they see each other's boats in
-//      the shared world. Player 1 is the authority for shared
-//      entities (pirates, plastic, whale) — player 2's copy of those
-//      systems stays passive and just mirrors the broadcasts.
-(() => {
-  const qs = new URLSearchParams(location.search);
-  if (qs.get('split') !== '1') return; // not in split-screen shell
-  const me = Math.max(1, Math.min(4, parseInt(qs.get('player') || '1', 10)));
-  window.__tiSplit = { enabled: true, me, isAuthority: (me === 1), others: new Map() };
-
-  // Body class lets CSS (see #radar-hud block) hide the HUD widgets
-  // that now live on the shell (timer, leaderboard, controls hint,
-  // REPO guide, Hydro panel, upgrade sidebar) so the two iframes just
-  // show the world + their own left/right HUD panel.
-  document.addEventListener('DOMContentLoaded', () => {
-    const ss = document.getElementById('start-screen');
-    if (ss) ss.hidden = true;
-    document.body.classList.add('split-iframe', 'split-iframe-p' + me);
-  });
-  // Prevent the in-iframe online code from reaching out to a server —
-  // split-screen is strictly local. Override after the function is
-  // defined (at the bottom of the inline script).
-  setTimeout(() => {
-    if (typeof window._mpConnect === 'undefined') return;
-    window._mpConnect = () => {};
-  }, 0);
-
-  // Input routing via BroadcastChannel — the shell and both iframes
-  // post to the same 'ti-split' channel, so keyboard events are
-  // captured once (by whichever window has focus) and all three
-  // receive them. This sidesteps the "only the focused iframe gets
-  // keys" limitation and lets both players mash their keys at the
-  // same time. We only mutate `input` when the message is addressed
-  // to us (d.player === me).
-  let ch = null;
-  try { ch = new BroadcastChannel('ti-split'); } catch (e) {}
-  window.__tiSplit.ch = ch;
-  if (ch) {
-    ch.onmessage = (ev) => {
-      const d = ev.data;
-      if (!d) return;
-      if (d.type === 'input' && d.player === me) {
-        if (typeof input === 'undefined') return;
-        if (d.action === 'forward' || d.action === 'backward' ||
-            d.action === 'left'    || d.action === 'right'    ||
-            d.action === 'boost') {
-          input[d.action] = !!d.pressed;
-        }
-        return;
-      }
-      if (d.type === 'pose' && d.me !== me) {
-        const nowMs = performance.now();
-        const latest = { x: d.x, z: d.z, rot: d.rot, t: nowMs };
-        const prev = window.__tiSplit.others.get(d.me);
-        if (!prev) {
-          // First sighting — seed both prev and next so the first
-          // render frame has something to interpolate between.
-          window.__tiSplit.others.set(d.me, {
-            prev: latest, next: latest,
-            health: d.health | 0, score: d.score | 0,
-          });
-        } else {
-          // Advance the ring buffer: old "next" becomes "prev", new
-          // packet becomes "next". Pattern matches the online
-          // snapshot-interpolation code in _mpApplyPoses so remote
-          // boats glide between server ticks instead of snapping
-          // every 100ms (was the "saccadé" stutter the user saw).
-          prev.prev = prev.next;
-          prev.next = latest;
-          prev.health = d.health | 0;
-          prev.score = d.score | 0;
-        }
-      }
-    };
-  }
-  // Capture keyboard locally too and rebroadcast — the focused
-  // iframe's window sees the keydown first; pushing it into the
-  // channel lets the other iframe + the shell see it as well.
-  const P1_KEYS = {
-    KeyW: 'forward', KeyS: 'backward', KeyA: 'left', KeyD: 'right', Space: 'boost',
-  };
-  const P2_KEYS = {
-    ArrowUp: 'forward', ArrowDown: 'backward',
-    ArrowLeft: 'left', ArrowRight: 'right', Enter: 'boost',
-  };
-  function _tiIframeKey(ev, pressed) {
-    let player = 0, action = null;
-    if (ev.code in P1_KEYS) { player = 1; action = P1_KEYS[ev.code]; }
-    else if (ev.code in P2_KEYS) { player = 2; action = P2_KEYS[ev.code]; }
-    if (!player) return;
-    if (ch) {
-      try { ch.postMessage({ type: 'input', player, action, pressed }); } catch (e) {}
-    }
-    ev.preventDefault();
-  }
-  window.addEventListener('keydown', (ev) => _tiIframeKey(ev, true),  true);
-  window.addEventListener('keyup',   (ev) => _tiIframeKey(ev, false), true);
-
-  // P2: mute music so we don't stack two copies of the main theme.
-  // SFX stay active on both iframes so each player hears feedback
-  // from their own actions (bumps, pickups, crank, etc.). We monkey-
-  // patch the music start/loop helpers to no-op on P2.
-  if (me !== 1) {
-    const _muteLoopHelpers = () => {
-      const names = ['startThemeMusic', 'stopThemeMusic',
-                     'updateThemeMusic', 'startEndgameTheme',
-                     'stopEndgameTheme', 'startOceanAmbient',
-                     'stopOceanAmbient', 'startMotorLoop',
-                     'stopMotorLoop', 'updateMotorLoop'];
-      for (const n of names) {
-        if (typeof window[n] === 'function') window[n] = () => {};
-      }
-      // Also null out any <audio> the game has already constructed so
-      // it can't play even if the bootstrapping code reads directly.
-      const kill = (name) => {
-        try { if (window[name] && window[name].pause) { window[name].pause(); window[name].volume = 0; } } catch (e) {}
-      };
-      kill('themeAudio'); kill('themeMainAudio'); kill('themePirateAudio');
-      kill('themeEndgameAudio'); kill('oceanAmbientAudio'); kill('motorAudio');
-    };
-    // The audio functions are defined in the main inline script, so
-    // they only exist after DOMContentLoaded-plus. Try twice.
-    setTimeout(_muteLoopHelpers, 0);
-    setTimeout(_muteLoopHelpers, 1500);
-  }
-
-  // Auto-start the solo round once the boot code finishes defining
-  // _beginSolo. We poll because initialization is asynchronous.
-  const tryStart = () => {
-    if (typeof window._beginSolo === 'function') {
-      try { window._beginSolo(); } catch (e) {}
-    } else {
-      setTimeout(tryStart, 100);
-    }
-  };
-  setTimeout(tryStart, 250);
-
-  // Pose broadcaster — 10 Hz, shape matches the online protocol so
-  // we could later reuse the server-side interpolation code.
-  setInterval(() => {
-    if (!window.__tiSplit || !window.__tiSplit.ch) return;
-    if (typeof localPlayer === 'undefined' || !localPlayer) return;
-    try {
-      window.__tiSplit.ch.postMessage({
-        type: 'pose',
-        me,
-        x: +localPlayer.x.toFixed(2),
-        z: +localPlayer.z.toFixed(2),
-        rot: +((localPlayer.rotation || 0).toFixed(3)),
-        health: localPlayer.health | 0,
-        score: localPlayer.totalCollected | 0,
-      });
-    } catch (e) {}
-  }, 100);
-
-  // Timer publisher — only P1 (authority) runs this. Broadcasts the
-  // remaining session time so the shell can paint its single shared
-  // timer pill. P2 suppresses its own clock to avoid two sources of
-  // truth.
-  if (me === 1) {
-    setInterval(() => {
-      if (!window.__tiSplit || !window.__tiSplit.ch) return;
-      if (typeof gameTimeRemaining === 'undefined') return;
-      const total = Math.max(0, Math.floor(gameTimeRemaining));
-      const mm = Math.floor(total / 60);
-      const ss = total % 60;
-      const display = String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
-      try {
-        window.__tiSplit.ch.postMessage({ type: 'timer', total, display });
-      } catch (e) {}
-    }, 500);
-  }
-
-  // Remote-boat renderer — builds a second boat mesh for each remote
-  // player whose pose we've cached and keeps it in sync with the
-  // broadcast data. Called once per frame by the game loop (see the
-  // _tiSplitSyncRemoteBoats hook there).
-  //
-  // We clone whichever boat template the solo engine already uses,
-  // so the other captain is visually identical to the local one.
-  // A small floating label above the hull names them.
-  const _tiRemoteMeshes = new Map();   // player -> THREE.Group
-  const _tiRemoteLabels = new Map();   // player -> DOM element
-
-  function _tiEnsureRemoteMesh(player) {
-    if (_tiRemoteMeshes.has(player)) return _tiRemoteMeshes.get(player);
-    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return null;
-    let m;
-    try {
-      if (typeof fisherBoatTemplate !== 'undefined' && fisherBoatTemplate) {
-        m = fisherBoatTemplate.clone();
-      } else if (typeof boatModelTemplate !== 'undefined' && boatModelTemplate) {
-        m = boatModelTemplate.clone();
-      } else if (typeof createProceduralBoat === 'function') {
-        // Give the remote captain a warm contrast tint so both
-        // players are easy to tell apart at a glance.
-        m = createProceduralBoat(player === 1 ? 0x00ccff : 0xff9a3c);
-      }
-    } catch (e) {}
-    if (!m) return null;
-    // Deep-clone every material the cloned GLTF inherited from the
-    // shared template. Without this, the remote hull shares its
-    // MeshStandardMaterial with the local boat and ends up looking
-    // translucent / wrong as the solo engine mutates the shared
-    // material (emissive, opacity, etc.) each frame. Mirrors the
-    // material-clone pass that makePlayerMesh() does for the P1
-    // boat.
-    m.traverse((c) => {
-      if (c.isMesh && c.material) {
-        const mats = Array.isArray(c.material) ? c.material : [c.material];
-        const cloned = mats.map((mat) => {
-          const nm = mat.clone();
-          if (nm.emissive) {
-            nm.emissive = new THREE.Color(0x2a2420);
-            nm.emissiveIntensity = 1.0;
-          }
-          nm.transparent = false;
-          nm.opacity = 1.0;
-          nm.depthWrite = true;
-          return nm;
-        });
-        c.material = Array.isArray(c.material) ? cloned : cloned[0];
-      }
-    });
-    m.position.set(0, 0.8, 0);
-    scene.add(m);
-    _tiRemoteMeshes.set(player, m);
-    // Floating name label — we reuse the DOM label system if it's
-    // available, otherwise spawn a tiny overlay div.
-    try {
-      const lc = document.getElementById('labels-container');
-      if (lc) {
-        const el = document.createElement('div');
-        el.className = 'label-name';
-        el.textContent = 'Capitaine ' + player;
-        el.style.cssText = 'position:absolute;pointer-events:none;color:#fff;background:rgba(10,22,40,0.78);padding:2px 7px;border-radius:6px;font-family:var(--font-heading);font-size:0.68rem;letter-spacing:1px;';
-        lc.appendChild(el);
-        _tiRemoteLabels.set(player, el);
-      }
-    } catch (e) {}
-    return m;
-  }
-
-  window._tiSplitSyncRemoteBoats = function _tiSplitSyncRemoteBoats() {
-    if (!window.__tiSplit) return;
-    const others = window.__tiSplit.others;
-    if (!others || others.size === 0) return;
-    if (typeof getWaveHeight !== 'function' || typeof gameTime === 'undefined') return;
-    // One-tick render-behind delay gives us a safe window to
-    // interpolate between the last two known poses without
-    // extrapolating (which is what produces rubber-band visuals
-    // under jitter). 130ms = 1 publish tick (100ms) + a 30ms
-    // cushion; same value the online code uses.
-    const RENDER_DELAY_MS = 130;
-    const renderT = performance.now() - RENDER_DELAY_MS;
-    for (const [player, cache] of others.entries()) {
-      const m = _tiEnsureRemoteMesh(player);
-      if (!m || !cache.prev || !cache.next) continue;
-      const span = Math.max(1, cache.next.t - cache.prev.t);
-      let alpha = (renderT - cache.prev.t) / span;
-      if (alpha < 0) alpha = 0;
-      if (alpha > 1) alpha = 1;
-      const ix = cache.prev.x + (cache.next.x - cache.prev.x) * alpha;
-      const iz = cache.prev.z + (cache.next.z - cache.prev.z) * alpha;
-      // Angle lerp with wrap-around so a boat spinning past PI
-      // doesn't rotate the long way around.
-      let dr = cache.next.rot - cache.prev.rot;
-      while (dr >  Math.PI) dr -= 2 * Math.PI;
-      while (dr < -Math.PI) dr += 2 * Math.PI;
-      const irot = cache.prev.rot + dr * alpha;
-      // Bobbing + tilt — match the solo boat math so the remote
-      // captain rises and rolls on the same waves as the local
-      // player (without it, their hull looks like it's floating
-      // above flat water while the local boat bobs).
-      const wy = getWaveHeight(ix, iz, gameTime);
-      const tilt = (typeof getWaveTilt === 'function')
-        ? getWaveTilt(ix, iz, gameTime)
-        : { tiltX: 0, tiltZ: 0 };
-      const baseYRot = -Math.PI / 2;
-      m.position.set(ix, wy + 0.8, iz);
-      m.rotation.order = 'YXZ';
-      m.rotation.set(tilt.tiltX, irot + baseYRot, tilt.tiltZ);
-      // Project the hull position to screen and place the label.
-      const lbl = _tiRemoteLabels.get(player);
-      if (lbl && typeof camera !== 'undefined' && typeof renderer !== 'undefined') {
-        const v = new THREE.Vector3(ix, wy + 3.4, iz);
-        v.project(camera);
-        const canvas = renderer.domElement;
-        if (v.z < 1) {
-          const sx = (v.x * 0.5 + 0.5) * canvas.clientWidth;
-          const sy = (-v.y * 0.5 + 0.5) * canvas.clientHeight;
-          lbl.style.left = (sx - 32) + 'px';
-          lbl.style.top  = (sy - 18) + 'px';
-          lbl.style.display = 'block';
-        } else {
-          lbl.style.display = 'none';
-        }
-      }
-    }
-  };
-})();
-
-// ============================================================
-// Split-screen (local multi) — Phase 1: menu button is live, engine
-// is not. Clicking shows a "coming soon" toast so players know the
-// slot exists without hitting a broken code path. Phase 2 will wire
-// this to the real multi-viewport launcher.
-// ============================================================
-// Launch split-screen by navigating to the dedicated shell page.
-// The shell loads two iframes of trashure-fury.html?split=1&player=N
-// side by side and routes keyboard input to the right iframe via
-// postMessage. Each iframe runs the full solo game — the split
-// hook inside this file auto-starts the solo loop and swaps the
-// keyboard listener for the shell's postMessage stream.
+// One engine, one scene, two cameras rendered side by side. The
+// world (pirates, plastic, whale, audio) is shared by construction
+// because it's literally the same objects. We add a parallel P2
+// "lane" of state + tick + HUD and extend renderFrame() to scissor
+// two viewports when splitMode === '2'. Solo / online paths are
+// unchanged because the P2 lane only activates when splitMode flips.
 function beginSplit() {
-  location.href = 'split.html';
+  try { if (_mp.ws) _mp.ws.close(); } catch (e) {}
+  _mp.ws = null;
+  if (_mp.reconnectTimer) { clearTimeout(_mp.reconnectTimer); _mp.reconnectTimer = null; }
+  _mpHideWaitingRoom();
+  document.body.classList.remove('mp-online');
+  document.body.classList.add('split-mode');
+  _initSplitTwoPlayer();
+  _beginLocalRound();
 }
 window._beginSplit = beginSplit;
+
+// Build P2: a second player object mirroring localPlayer, a boat
+// mesh cloned from the same fisherBoatTemplate, a follow-camera, an
+// HUD element. Called exactly once by beginSplit(). We wait for the
+// GLTF template in _onTemplatesReady below if assets are still
+// loading at click time.
+function _initSplitTwoPlayer() {
+  if (splitMode === '2') return;
+  splitMode = '2';
+  // Spawn P2 at a different corner so the two boats aren't stacked.
+  const corner = (typeof SPAWN_CORNERS !== 'undefined' && SPAWN_CORNERS.length)
+    ? SPAWN_CORNERS[2 % SPAWN_CORNERS.length]
+    : { x: 30, z: 30 };
+  splitP2 = {
+    id: 'local2',
+    name: 'Capitaine 2',
+    x: corner.x, z: corner.z,
+    rotation: Math.atan2(-corner.x, -corner.z), // face the island
+    health: MAX_HEALTH,
+    plasticCount: 0, totalCollected: 0,
+    boatLevel: 1,
+    vx: 0, vz: 0,
+    lastHitTime: -999,
+    boostEnergy: 1,
+    isBot: false,
+    color: (typeof PLAYER_COLORS !== 'undefined' && PLAYER_COLORS[1]) || '#ff9a3c',
+  };
+  splitP2Camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2000);
+  splitP2Camera.position.set(splitP2.x, CAMERA_HEIGHT, splitP2.z + CAMERA_FOLLOW_DISTANCE);
+  splitP2Camera.lookAt(splitP2.x, 0, splitP2.z);
+  _ensureSplitHudP2();
+  // The P2 mesh needs fisherBoatTemplate which loads async. initGame()
+  // is what calls makePlayerMesh for P1, so we hook a build pass there
+  // (see the call site) and also retry on every frame until the mesh
+  // is in the scene — solves the race if split mode is activated
+  // before the GLTF finishes loading.
+}
+
+// Creates the P2 boat mesh in the shared scene. Safe to call repeatedly;
+// no-op after the mesh is built. Mirrors the init path makePlayerMesh
+// takes for P1 (same template, material deep-clone, etc.) so both
+// boats look identical.
+function _ensureSplitP2Mesh() {
+  if (splitMode !== '2' || !splitP2) return null;
+  if (splitP2Mesh) return splitP2Mesh;
+  if (typeof fisherBoatTemplate === 'undefined' || !fisherBoatTemplate) return null;
+  const m = fisherBoatTemplate.clone();
+  // Deep-clone materials so the solo engine's per-frame material
+  // tweaks on P1 don't bleed into P2. Same pass as makePlayerMesh.
+  m.traverse((c) => {
+    if (c.isMesh && c.material) {
+      const mats = Array.isArray(c.material) ? c.material : [c.material];
+      const cloned = mats.map((mat) => {
+        const nm = mat.clone();
+        if (nm.emissive) {
+          nm.emissive = new THREE.Color(0x2a2420);
+          nm.emissiveIntensity = 1.0;
+        }
+        return nm;
+      });
+      c.material = Array.isArray(c.material) ? cloned : cloned[0];
+    }
+  });
+  m.position.set(splitP2.x, 0.8, splitP2.z);
+  scene.add(m);
+  splitP2Mesh = m;
+  return m;
+}
+
+function _ensureSplitHudP2() {
+  if (document.getElementById('hud-p2')) return;
+  const base = document.getElementById('hud');
+  if (!base) return;
+  const p2 = base.cloneNode(true);
+  p2.id = 'hud-p2';
+  // Rewrite child ids so the HUD tick can address P2's bars separately.
+  p2.querySelectorAll('[id]').forEach((el) => { el.id = el.id + '-p2'; });
+  const nm = p2.querySelector('#hud-name-p2');
+  if (nm) nm.textContent = 'Capitaine 2';
+  document.body.appendChild(p2);
+}
+
+// Per-frame P2 tick — runs movePlayer + garbage collection + camera
+// follow + HUD refresh. Everything targets splitP2 / splitP2Camera /
+// hud-p2 so P1's pipeline is untouched. Called from the main
+// gameLoop next to the P1 updates.
+function _tickSplitPlayerTwo(dt) {
+  if (splitMode !== '2' || !splitP2) return;
+  // Late-build guard: if the boat mesh wasn't ready at init time,
+  // try again each frame until the GLTF template has loaded.
+  if (!splitP2Mesh) _ensureSplitP2Mesh();
+  try { movePlayer(splitP2, splitP2Input, dt, splitP2Upgrades); } catch (e) {}
+  try { checkGarbageCollection(splitP2, splitP2Upgrades); } catch (e) {}
+  // Mesh pose — mirror the minimal bits from the P1 path. Full
+  // motor-vibration / pitch-wrapper visuals stay P1-only for now.
+  if (splitP2Mesh) {
+    const w2 = getWaveHeight(splitP2.x, splitP2.z, gameTime);
+    const tilt = getWaveTilt(splitP2.x, splitP2.z, gameTime);
+    splitP2Mesh.position.set(splitP2.x, w2 + 0.8, splitP2.z);
+    splitP2Mesh.rotation.order = 'YXZ';
+    splitP2Mesh.rotation.set(tilt.tiltX, splitP2.rotation + (-Math.PI / 2), tilt.tiltZ);
+  }
+  // Camera follow — same math as updateCamera() but driven by P2.
+  if (splitP2Camera) {
+    const tx = splitP2.x - Math.sin(splitP2.rotation) * CAMERA_FOLLOW_DISTANCE;
+    const tz = splitP2.z - Math.cos(splitP2.rotation) * CAMERA_FOLLOW_DISTANCE;
+    const wH = getWaveHeight(splitP2.x, splitP2.z, gameTime);
+    const ty = wH + CAMERA_HEIGHT;
+    splitP2Camera.position.x += (tx - splitP2Camera.position.x) * 0.05;
+    splitP2Camera.position.y += (ty - splitP2Camera.position.y) * 0.05;
+    splitP2Camera.position.z += (tz - splitP2Camera.position.z) * 0.05;
+    splitP2Camera.lookAt(splitP2.x, wH + CAMERA_LOOK_Y, splitP2.z);
+  }
+}
+
+function _updateSplitHudP2() {
+  if (splitMode !== '2' || !splitP2) return;
+  const hp = document.getElementById('hud-hp-p2');
+  if (hp) hp.style.width = Math.max(0, Math.min(100, (splitP2.health / MAX_HEALTH) * 100)) + '%';
+  const boost = document.getElementById('hud-boost-p2');
+  if (boost) boost.style.width = Math.max(0, Math.min(100, splitP2.boostEnergy * 100)) + '%';
+  const tot = document.getElementById('hud-total-p2');
+  if (tot) tot.textContent = splitP2.totalCollected | 0;
+  const nm = document.getElementById('hud-name-p2');
+  if (nm) nm.textContent = splitP2.name;
+}
 
 // ============================================================
 // Soft rejoin — restart a personal 3-min session without reloading.
