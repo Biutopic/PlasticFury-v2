@@ -2310,21 +2310,22 @@ const input = { forward: false, backward: false, left: false, right: false, boos
 // LOCAL SPLIT-SCREEN (Mario Kart style, same scene, two cameras)
 // ============================================================
 // splitMode === 'off' → single player, unchanged from the solo game.
-// splitMode === '2'   → two viewports, two cameras, two boats in the
-//                        SAME scene. Pirates / plastic / whale / audio
-//                        are the engine's shared instances; we never
-//                        duplicate the world. Only the per-player
-//                        state (pose, HP, input, upgrades, HUD) is
-//                        added in a parallel "splitP2.*" lane. Every
-//                        core update function keeps working for solo.
+// splitMode === '2'   → P2 is added to the existing bots[] array with
+//                        isHuman = true. The solo engine already
+//                        iterates bots[] every frame for movement,
+//                        garbage collection, level-ups, exoskeleton
+//                        modules, magnet, solar regen and death — so
+//                        by reusing that pipeline P2 gets every
+//                        gameplay feature for free. The only two
+//                        hooks are: computeBotInput returns the
+//                        keyboard input when bot.isHuman, and the
+//                        split camera follows that same bot entity.
 let splitMode = 'off';
-let splitP2 = null;                 // second player object, mirrors localPlayer shape
-let splitP2Mesh = null;             // second boat mesh (cloned from fisherBoatTemplate)
-let splitP2Camera = null;           // second follow camera
+let splitP2Camera = null;           // second follow camera (P2)
+let splitP2Bot = null;              // reference to the P2 entity inside bots[]
 const splitP2Input = {
   forward: false, backward: false, left: false, right: false, boost: false, fire: false,
 };
-const splitP2Upgrades = { solar_panel: 0, speed: 0, magnet: 0 };
 
 // 3D references
 let playerMesh = null;
@@ -4825,6 +4826,19 @@ function computeAggressiveInput(bot, dt) {
 }
 
 function computeBotInput(bot, dt) {
+  // Split-screen P2: the bot has no AI, its input comes from the
+  // second player's keyboard. Everything else in the bot pipeline
+  // (movePlayer, garbage collection, level-ups, exoskeleton modules,
+  // magnet, solar regen, death) stays unchanged.
+  if (bot.isHuman) {
+    return {
+      forward:  !!splitP2Input.forward,
+      backward: !!splitP2Input.backward,
+      left:     !!splitP2Input.left,
+      right:    !!splitP2Input.right,
+      boost:    !!splitP2Input.boost,
+    };
+  }
   if (bot.isWhale) return computeWhaleInput(bot, dt);
   if (bot.isHydro) return computeHydroInput(bot, dt);
   return computeAggressiveInput(bot, dt);
@@ -8384,7 +8398,7 @@ window.addEventListener('keydown', (e) => {
   const bind = _resolveKeyBinding(e.code);
   if (bind) {
     const target = bind.who === 'p2' ? splitP2Input : input;
-    const actor  = bind.who === 'p2' ? splitP2     : localPlayer;
+    const actor  = bind.who === 'p2' ? splitP2Bot   : localPlayer;
     const wasOn  = target[bind.act];
     target[bind.act] = true;
     // Play the whoosh the instant the player engages turbo, but only
@@ -11636,10 +11650,6 @@ function updateCrabIntro(dt, cdTimer) {
 function initGame() {
   if (bots.length > 0) return; // guard re-init
   playerMesh = makePlayerMesh();
-  // Split-screen P2 boat — builds from the same fisherBoatTemplate
-  // that P1 just used, with the same material deep-clone. Safe to
-  // call even if splitMode is off (it early-returns).
-  _ensureSplitP2Mesh();
   // Grab the GLTF inner group (the tug-boat template wraps the model in a
   // child with rotation.y = π and position(0,-40,0) so we pitch by adding X
   // rotation directly to it — this is the ONE object that actually transforms
@@ -14505,72 +14515,40 @@ function beginSplit() {
 }
 window._beginSplit = beginSplit;
 
-// Build P2: a second player object mirroring localPlayer, a boat
-// mesh cloned from the same fisherBoatTemplate, a follow-camera, an
-// HUD element. Called exactly once by beginSplit(). We wait for the
-// GLTF template in _onTemplatesReady below if assets are still
-// loading at click time.
+// Switch the game into 2-player split mode. P2 is added as a bot
+// entity with isHuman = true so the entire solo bot pipeline
+// (movement, garbage pickup, level-ups, exoskeleton modules,
+// magnet, solar regen, death/respawn) runs on it automatically.
+// A dedicated follow-camera tracks that bot entity; the HUD reads
+// from it. Called exactly once by beginSplit().
 function _initSplitTwoPlayer() {
   if (splitMode === '2') return;
   splitMode = '2';
-  // Spawn P2 at a different corner so the two boats aren't stacked.
-  const corner = (typeof SPAWN_CORNERS !== 'undefined' && SPAWN_CORNERS.length)
-    ? SPAWN_CORNERS[2 % SPAWN_CORNERS.length]
-    : { x: 30, z: 30 };
-  splitP2 = {
-    id: 'local2',
-    name: 'Capitaine 2',
-    x: corner.x, z: corner.z,
-    rotation: Math.atan2(-corner.x, -corner.z), // face the island
-    health: MAX_HEALTH,
-    plasticCount: 0, totalCollected: 0,
-    boatLevel: 1,
-    vx: 0, vz: 0,
-    lastHitTime: -999,
-    boostEnergy: 1,
-    isBot: false,
-    color: (typeof PLAYER_COLORS !== 'undefined' && PLAYER_COLORS[1]) || '#ff9a3c',
-  };
-  splitP2Camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2000);
-  splitP2Camera.position.set(splitP2.x, CAMERA_HEIGHT, splitP2.z + CAMERA_FOLLOW_DISTANCE);
-  splitP2Camera.lookAt(splitP2.x, 0, splitP2.z);
   _ensureSplitHudP2();
-  // The P2 mesh needs fisherBoatTemplate which loads async. initGame()
-  // is what calls makePlayerMesh for P1, so we hook a build pass there
-  // (see the call site) and also retry on every frame until the mesh
-  // is in the scene — solves the race if split mode is activated
-  // before the GLTF finishes loading.
+  // The actual bot entry is created in _ensureSplitP2Bot once bots[]
+  // is populated by initGame. We poll from the game loop until it
+  // lands (asset loading is async).
+  splitP2Camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2000);
+  splitP2Camera.position.set(0, CAMERA_HEIGHT, CAMERA_FOLLOW_DISTANCE);
+  splitP2Camera.lookAt(0, 0, 0);
 }
 
-// Creates the P2 boat mesh in the shared scene. Safe to call repeatedly;
-// no-op after the mesh is built. Mirrors the init path makePlayerMesh
-// takes for P1 (same template, material deep-clone, etc.) so both
-// boats look identical.
-function _ensureSplitP2Mesh() {
-  if (splitMode !== '2' || !splitP2) return null;
-  if (splitP2Mesh) return splitP2Mesh;
-  if (typeof fisherBoatTemplate === 'undefined' || !fisherBoatTemplate) return null;
-  const m = fisherBoatTemplate.clone();
-  // Deep-clone materials so the solo engine's per-frame material
-  // tweaks on P1 don't bleed into P2. Same pass as makePlayerMesh.
-  m.traverse((c) => {
-    if (c.isMesh && c.material) {
-      const mats = Array.isArray(c.material) ? c.material : [c.material];
-      const cloned = mats.map((mat) => {
-        const nm = mat.clone();
-        if (nm.emissive) {
-          nm.emissive = new THREE.Color(0x2a2420);
-          nm.emissiveIntensity = 1.0;
-        }
-        return nm;
-      });
-      c.material = Array.isArray(c.material) ? cloned : cloned[0];
-    }
-  });
-  m.position.set(splitP2.x, 0.8, splitP2.z);
-  scene.add(m);
-  splitP2Mesh = m;
-  return m;
+// Convert one of the regular bot slots (preferably a non-Hydronaute
+// one) into a human-controlled P2. We reuse an existing slot rather
+// than push a new one so the BOT_COUNT-based sizing of the
+// leaderboard + AI rebalance stays identical to solo. Called once
+// from _tickSplitPlayerTwo as soon as bots[] is populated.
+function _ensureSplitP2Bot() {
+  if (splitMode !== '2' || splitP2Bot) return;
+  if (!bots || bots.length === 0) return;
+  // Prefer bot_1 (the first aggressive AI) so P2 gets a regular
+  // fisher boat mesh and not the Hydronaute model. Fall back to
+  // the last bot if the naming ever changes.
+  let target = bots.find((b) => !b.isWhale && !b.isHydro);
+  if (!target) return;
+  target.isHuman = true;
+  target.name = 'Capitaine 2';
+  splitP2Bot = target;
 }
 
 function _ensureSplitHudP2() {
@@ -14586,49 +14564,35 @@ function _ensureSplitHudP2() {
   document.body.appendChild(p2);
 }
 
-// Per-frame P2 tick — runs movePlayer + garbage collection + camera
-// follow + HUD refresh. Everything targets splitP2 / splitP2Camera /
-// hud-p2 so P1's pipeline is untouched. Called from the main
-// gameLoop next to the P1 updates.
+// Per-frame P2 hook — just binds the bot entity if we haven't yet
+// and drives the P2 camera off that entity's pose. Movement,
+// pickups, level-ups, exo visuals all happen in the main bot
+// loop because bots.forEach runs through target just like any
+// other captain.
 function _tickSplitPlayerTwo(dt) {
-  if (splitMode !== '2' || !splitP2) return;
-  // Late-build guard: if the boat mesh wasn't ready at init time,
-  // try again each frame until the GLTF template has loaded.
-  if (!splitP2Mesh) _ensureSplitP2Mesh();
-  try { movePlayer(splitP2, splitP2Input, dt, splitP2Upgrades); } catch (e) {}
-  try { checkGarbageCollection(splitP2, splitP2Upgrades); } catch (e) {}
-  // Mesh pose — mirror the minimal bits from the P1 path. Full
-  // motor-vibration / pitch-wrapper visuals stay P1-only for now.
-  if (splitP2Mesh) {
-    const w2 = getWaveHeight(splitP2.x, splitP2.z, gameTime);
-    const tilt = getWaveTilt(splitP2.x, splitP2.z, gameTime);
-    splitP2Mesh.position.set(splitP2.x, w2 + 0.8, splitP2.z);
-    splitP2Mesh.rotation.order = 'YXZ';
-    splitP2Mesh.rotation.set(tilt.tiltX, splitP2.rotation + (-Math.PI / 2), tilt.tiltZ);
-  }
-  // Camera follow — same math as updateCamera() but driven by P2.
-  if (splitP2Camera) {
-    const tx = splitP2.x - Math.sin(splitP2.rotation) * CAMERA_FOLLOW_DISTANCE;
-    const tz = splitP2.z - Math.cos(splitP2.rotation) * CAMERA_FOLLOW_DISTANCE;
-    const wH = getWaveHeight(splitP2.x, splitP2.z, gameTime);
-    const ty = wH + CAMERA_HEIGHT;
-    splitP2Camera.position.x += (tx - splitP2Camera.position.x) * 0.05;
-    splitP2Camera.position.y += (ty - splitP2Camera.position.y) * 0.05;
-    splitP2Camera.position.z += (tz - splitP2Camera.position.z) * 0.05;
-    splitP2Camera.lookAt(splitP2.x, wH + CAMERA_LOOK_Y, splitP2.z);
-  }
+  if (splitMode !== '2') return;
+  if (!splitP2Bot) _ensureSplitP2Bot();
+  if (!splitP2Bot || !splitP2Camera) return;
+  const tx = splitP2Bot.x - Math.sin(splitP2Bot.rotation) * CAMERA_FOLLOW_DISTANCE;
+  const tz = splitP2Bot.z - Math.cos(splitP2Bot.rotation) * CAMERA_FOLLOW_DISTANCE;
+  const wH = getWaveHeight(splitP2Bot.x, splitP2Bot.z, gameTime);
+  const ty = wH + CAMERA_HEIGHT;
+  splitP2Camera.position.x += (tx - splitP2Camera.position.x) * 0.05;
+  splitP2Camera.position.y += (ty - splitP2Camera.position.y) * 0.05;
+  splitP2Camera.position.z += (tz - splitP2Camera.position.z) * 0.05;
+  splitP2Camera.lookAt(splitP2Bot.x, wH + CAMERA_LOOK_Y, splitP2Bot.z);
 }
 
 function _updateSplitHudP2() {
-  if (splitMode !== '2' || !splitP2) return;
+  if (splitMode !== '2' || !splitP2Bot) return;
   const hp = document.getElementById('hud-hp-p2');
-  if (hp) hp.style.width = Math.max(0, Math.min(100, (splitP2.health / MAX_HEALTH) * 100)) + '%';
+  if (hp) hp.style.width = Math.max(0, Math.min(100, (splitP2Bot.health / MAX_HEALTH) * 100)) + '%';
   const boost = document.getElementById('hud-boost-p2');
-  if (boost) boost.style.width = Math.max(0, Math.min(100, splitP2.boostEnergy * 100)) + '%';
+  if (boost) boost.style.width = Math.max(0, Math.min(100, (splitP2Bot.boostEnergy || 0) * 100)) + '%';
   const tot = document.getElementById('hud-total-p2');
-  if (tot) tot.textContent = splitP2.totalCollected | 0;
+  if (tot) tot.textContent = splitP2Bot.totalCollected | 0;
   const nm = document.getElementById('hud-name-p2');
-  if (nm) nm.textContent = splitP2.name;
+  if (nm) nm.textContent = splitP2Bot.name;
 }
 
 // ============================================================
