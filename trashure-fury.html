@@ -13464,6 +13464,13 @@ function gameLoop(timestamp) {
     if (fireCH.style.display !== 'none') fireCH.style.display = 'none';
   }
 
+  // Split-screen: draw the other player's boat in this iframe's
+  // scene using the latest pose we received over BroadcastChannel.
+  // The mesh is created on first sight and reused every frame.
+  if (typeof _tiSplitSyncRemoteBoats === 'function') {
+    try { _tiSplitSyncRemoteBoats(); } catch (e) {}
+  }
+
   // Render (two-pass: world, then crab + countdown text on top)
   renderFrame();
 }
@@ -14564,6 +14571,86 @@ window._beginSolo = beginSolo;
       } catch (e) {}
     }, 500);
   }
+
+  // Remote-boat renderer — builds a second boat mesh for each remote
+  // player whose pose we've cached and keeps it in sync with the
+  // broadcast data. Called once per frame by the game loop (see the
+  // _tiSplitSyncRemoteBoats hook there).
+  //
+  // We clone whichever boat template the solo engine already uses,
+  // so the other captain is visually identical to the local one.
+  // A small floating label above the hull names them.
+  const _tiRemoteMeshes = new Map();   // player -> THREE.Group
+  const _tiRemoteLabels = new Map();   // player -> DOM element
+
+  function _tiEnsureRemoteMesh(player) {
+    if (_tiRemoteMeshes.has(player)) return _tiRemoteMeshes.get(player);
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return null;
+    let m;
+    try {
+      if (typeof fisherBoatTemplate !== 'undefined' && fisherBoatTemplate) {
+        m = fisherBoatTemplate.clone();
+      } else if (typeof boatModelTemplate !== 'undefined' && boatModelTemplate) {
+        m = boatModelTemplate.clone();
+      } else if (typeof createProceduralBoat === 'function') {
+        // Give the remote captain a warm contrast tint so both
+        // players are easy to tell apart at a glance.
+        m = createProceduralBoat(player === 1 ? 0x00ccff : 0xff9a3c);
+      }
+    } catch (e) {}
+    if (!m) return null;
+    m.position.set(0, 0.8, 0);
+    scene.add(m);
+    _tiRemoteMeshes.set(player, m);
+    // Floating name label — we reuse the DOM label system if it's
+    // available, otherwise spawn a tiny overlay div.
+    try {
+      const lc = document.getElementById('labels-container');
+      if (lc) {
+        const el = document.createElement('div');
+        el.className = 'label-name';
+        el.textContent = 'Capitaine ' + player;
+        el.style.cssText = 'position:absolute;pointer-events:none;color:#fff;background:rgba(10,22,40,0.78);padding:2px 7px;border-radius:6px;font-family:var(--font-heading);font-size:0.68rem;letter-spacing:1px;';
+        lc.appendChild(el);
+        _tiRemoteLabels.set(player, el);
+      }
+    } catch (e) {}
+    return m;
+  }
+
+  window._tiSplitSyncRemoteBoats = function _tiSplitSyncRemoteBoats() {
+    if (!window.__tiSplit) return;
+    const others = window.__tiSplit.others;
+    if (!others || others.size === 0) return;
+    if (typeof getWaveHeight !== 'function' || typeof gameTime === 'undefined') return;
+    for (const [player, pose] of others.entries()) {
+      const m = _tiEnsureRemoteMesh(player);
+      if (!m) continue;
+      const wy = getWaveHeight(pose.x, pose.z, gameTime);
+      m.position.set(pose.x, wy + 0.5, pose.z);
+      m.rotation.order = 'YXZ';
+      // Mirror the same base rotation the local boat uses so the
+      // cloned template faces forward instead of sideways.
+      const baseYRot = -Math.PI / 2;
+      m.rotation.set(0, pose.rot + baseYRot, 0);
+      // Project the hull position to screen and place the label.
+      const lbl = _tiRemoteLabels.get(player);
+      if (lbl && typeof camera !== 'undefined' && typeof renderer !== 'undefined') {
+        const v = new THREE.Vector3(pose.x, wy + 3.4, pose.z);
+        v.project(camera);
+        const canvas = renderer.domElement;
+        if (v.z < 1) {
+          const sx = (v.x * 0.5 + 0.5) * canvas.clientWidth;
+          const sy = (-v.y * 0.5 + 0.5) * canvas.clientHeight;
+          lbl.style.left = (sx - 32) + 'px';
+          lbl.style.top  = (sy - 18) + 'px';
+          lbl.style.display = 'block';
+        } else {
+          lbl.style.display = 'none';
+        }
+      }
+    }
+  };
 })();
 
 // ============================================================
