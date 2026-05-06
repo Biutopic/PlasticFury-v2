@@ -8266,7 +8266,21 @@ const keyMap = {
   Space: 'boost',
 };
 
+// Skip the global gameplay keymap when the user is typing in a text
+// input — otherwise W / A / S / D would steer the boat instead of
+// reaching the captain-name field, and Cmd/Ctrl shortcuts (select
+// all, delete word, etc.) get swallowed. Same gate is mirrored on
+// the keyup listener and on the in-tutorial / fire-charge handlers.
+function _shouldIgnoreKeyForInput(e) {
+  const t = e.target;
+  if (!t) return false;
+  if (t.isContentEditable) return true;
+  const tag = t.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return false;
+}
 window.addEventListener('keydown', (e) => {
+  if (_shouldIgnoreKeyForInput(e)) return;
   const act = keyMap[e.code];
   if (act) {
     const wasOn = input[act];
@@ -8305,6 +8319,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
+  if (_shouldIgnoreKeyForInput(e)) return;
   const act = keyMap[e.code];
   if (act) input[act] = false;
 
