@@ -5837,8 +5837,8 @@ const water = new Water(waterGeometry, {
   // negligible (~655x pixel reduction vs original 512x512). If the
   // reflection ever looks too uniform / washed out, bump back up
   // toward 64-128.
-  textureWidth: 20,
-  textureHeight: 20,
+  textureWidth: 60,
+  textureHeight: 60,
   waterNormals: new THREE.TextureLoader().load(
     './public/assets/waternormals.jpg',
     (tex) => { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; },
