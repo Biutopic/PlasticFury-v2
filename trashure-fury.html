@@ -901,6 +901,24 @@
       min-width: 120px; text-align: center;
     }
 
+    /* FPS pill — small dim chip directly below the timer.
+       Color shifts to amber under 50, red under 30 to flag perf
+       drops at a glance. */
+    #fps-display {
+      position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+      z-index: 20; padding: 3px 10px;
+      font-family: var(--font-heading); font-size: 0.65rem;
+      letter-spacing: 2px;
+      color: rgba(180, 220, 240, 0.55);
+      background: rgba(10, 22, 40, 0.55);
+      border: 1px solid rgba(120, 180, 220, 0.18);
+      border-radius: 14px;
+      pointer-events: none;
+      transition: color 0.3s;
+    }
+    #fps-display.warn { color: #ffb340; }
+    #fps-display.bad  { color: #ff5a3c; }
+
     /* ---- HIT VIGNETTE ---- */
     #hit-vignette {
       position: fixed; inset: 0; z-index: 15;
@@ -1878,6 +1896,10 @@
 
   <!-- Timer -->
   <div id="timer-display" class="glass-panel">00:00</div>
+
+  <!-- FPS counter — tiny dim pill below the timer, top-center.
+       Updated ~2x/sec from the game loop. Doesn't influence gameplay. -->
+  <div id="fps-display">--&nbsp;FPS</div>
 
   <!-- Leaderboard -->
   <div id="leaderboard" class="glass-panel">
@@ -11985,8 +12007,32 @@ function renderFrame() {
   camera.layers.set(0);
 }
 
+// FPS sampler — counts frames between updates, refreshes the
+// #fps-display pill twice per second. Cheap (one DOM write per
+// 500ms, no per-frame work besides incrementing a counter).
+let _fpsFrames = 0;
+let _fpsLastT  = 0;
+let _fpsLastN  = -1;
+function _tickFps(timestamp) {
+  _fpsFrames++;
+  if (_fpsLastT === 0) _fpsLastT = timestamp;
+  if (timestamp - _fpsLastT < 500) return;
+  const fps = Math.round((_fpsFrames * 1000) / (timestamp - _fpsLastT));
+  _fpsFrames = 0; _fpsLastT = timestamp;
+  if (fps !== _fpsLastN) {
+    _fpsLastN = fps;
+    const el = document.getElementById('fps-display');
+    if (el) {
+      el.textContent = fps + ' FPS';
+      const cls = fps < 30 ? 'bad' : fps < 50 ? 'warn' : '';
+      if (el.className !== cls) el.className = cls;
+    }
+  }
+}
+
 function gameLoop(timestamp) {
   requestAnimationFrame(gameLoop);
+  _tickFps(timestamp);
   if (!gameStarted) return;
 
   const now = timestamp / 1000;
