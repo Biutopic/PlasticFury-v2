@@ -34,6 +34,11 @@ jobs:
           cp trashure-fury.html _site/index.html
           # Also keep the original name so direct links keep working.
           cp trashure-fury.html _site/trashure-fury.html
+          # Whale model lives at the repo root and is referenced as
+          # ./whale_swim.glb by the HTML. Without this copy, the GLTF
+          # loader 404s and the whale silently falls back to a tiny
+          # grey capsule that's nearly invisible in the water.
+          cp whale_swim.glb _site/whale_swim.glb
           # Split-screen shell — hosts two iframes of the main game.
           # Copy the assets directory as-is. The game references them as
           # ./public/assets/... so we preserve that layout.
