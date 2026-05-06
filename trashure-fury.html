@@ -5831,11 +5831,14 @@ const texLoader = new THREE.TextureLoader();
 const water = new Water(waterGeometry, {
   // Reflection target — was 512x512 which costs a full second-scene
   // render every frame at that resolution (~40% of GPU per frame).
-  // The shader blurs the reflection with the wave normal map anyway,
-  // so a 100x100 source is visually almost indistinguishable. ~25x
-  // pixel reduction = the reflection pass is now nearly free.
-  textureWidth: 100,
-  textureHeight: 100,
+  // The wave normal-map distortion smears the reflection so heavily
+  // that the source resolution stops mattering past a certain point.
+  // 20x20 is essentially "sky color blob" territory — total cost is
+  // negligible (~655x pixel reduction vs original 512x512). If the
+  // reflection ever looks too uniform / washed out, bump back up
+  // toward 64-128.
+  textureWidth: 20,
+  textureHeight: 20,
   waterNormals: new THREE.TextureLoader().load(
     './public/assets/waternormals.jpg',
     (tex) => { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; },
