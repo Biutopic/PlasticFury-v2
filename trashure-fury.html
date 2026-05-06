@@ -212,6 +212,24 @@
       margin-bottom: 32px;
       font-weight: 500;
     }
+    /* "Serious game" pill sits between the logo and the title to
+       set context immediately. Pill style + small italic so it
+       reads as an editorial tag rather than UI chrome. */
+    .start-serious-tag {
+      display: inline-block;
+      align-self: center;
+      padding: 4px 12px;
+      margin: 4px 0 8px;
+      font-family: var(--font-body);
+      font-size: 0.66rem;
+      font-style: italic;
+      letter-spacing: 1.2px;
+      color: rgba(220, 240, 255, 0.85);
+      background: rgba(0, 200, 200, 0.08);
+      border: 1px solid rgba(0, 220, 220, 0.35);
+      border-radius: 999px;
+      text-transform: lowercase;
+    }
     /* Info cards: 3-column grid of objective / controls / tips. */
     .start-info-grid {
       display: grid;
@@ -1745,6 +1763,10 @@
   </div>
   <div class="start-panel glass-panel">
     <img class="start-logo-img" src="./public/assets/hydronaute-white.svg" alt="L'Hydronaute par Biutopic">
+    <!-- "Serious game" tag — sits just above the title so newcomers
+         immediately understand this isn't only entertainment, it's
+         a behavioural-training data engine. -->
+    <div class="start-serious-tag" data-i18n="serious_tag">&laquo;&nbsp;serious&nbsp;&raquo; game pour l&rsquo;entra&icirc;nement comportemental de machines</div>
     <div class="start-title">TRASHURE ISLAND</div>
     <div class="start-subtitle" data-i18n="subtitle">un jeu qui entra&icirc;ne un mod&egrave;le d&rsquo;&eacute;vitement d&rsquo;obstacles</div>
     <button id="protocol-btn" onclick="if(window._openProtocol)window._openProtocol()"><svg class="protocol-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="8"  x2="16" y2="8"  stroke="currentColor" stroke-width="1.4"/><line x1="8" y1="12" x2="16" y2="12" stroke="currentColor" stroke-width="1.4"/><line x1="8" y1="16" x2="13" y2="16" stroke="currentColor" stroke-width="1.4"/></svg><span data-i18n="protocol_btn">NOTRE PROTOCOLE</span></button>
@@ -15148,6 +15170,7 @@ function _renderStartBoatScenes(tSec) {
 const I18N_STRINGS = {
   fr: {
     subtitle: 'un jeu qui entra\u00EEne un mod\u00E8le d\u2019\u00E9vitement d\u2019obstacles',
+    serious_tag: '\u00AB\u00A0serious\u00A0\u00BB game pour l\u2019entra\u00EEnement comportemental de machines',
     obj_title: 'Objectif',
     obj_body: 'Collecte le plastique qui flotte. Chaque morceau compte pour l\u2019oc\u00E9an.',
     ctrl_title: 'Contr\u00F4les',
@@ -15270,6 +15293,7 @@ const I18N_STRINGS = {
   },
   en: {
     subtitle: 'a game that trains an obstacle-avoidance model',
+    serious_tag: 'a \u201Cserious\u201D game for machine behaviour training',
     obj_title: 'Objective',
     obj_body: 'Scoop up the floating plastic. Every piece helps the ocean.',
     ctrl_title: 'Controls',
