@@ -2048,8 +2048,13 @@ const MAX_GARBAGE_COUNT = 40;
 const GARBAGE_WORLD_RADIUS = 160;
 
 const WORLD_RADIUS = 160;
-const WAVE_AMPLITUDE = 0.5;
-const WAVE_FREQUENCY = 0.3;
+// Bigger swell — boats rise/fall ~3x more than the original 0.5
+// amplitude. The Three.js Water plane stays geometrically flat for
+// now (its surface is rendered from a normal-map distortion shader
+// that doesn't follow getWaveHeight); a proper Gerstner-displacement
+// shader is the next step if the bobbing alone isn't enough drama.
+const WAVE_AMPLITUDE = 1.5;
+const WAVE_FREQUENCY = 0.35;
 const RIPPLE_BOAT_INTERVAL = 0.2;
 const RIPPLE_BOAT_AMP = 0.25;
 const RIPPLE_PIRATE_AMP = 0.5;
@@ -4461,13 +4466,23 @@ const deathExpGeo = new THREE.SphereGeometry(0.18, 6, 6);
 const deathExpColors = [0xff6633, 0xffaa00, 0xffdd44, 0xff4444, 0xffffff];
 const deathExpMats = deathExpColors.map(c => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 1 }));
 
+// Death-explosion pool — 15 particles per death, sized for one
+// simultaneous explosion plus headroom in case two boats sink in the
+// same frame.
+let _deathExpPool = null;
 function spawnDeathExplosion(x, z) {
+  if (!_deathExpPool) _deathExpPool = makeParticlePool(deathExpGeo, 40);
   const wy = getWaveHeight(x, z, gameTime);
   for (let i = 0; i < 15; i++) {
-    const mat = deathExpMats[Math.floor(Math.random() * deathExpMats.length)].clone();
-    const p = new THREE.Mesh(deathExpGeo, mat);
+    const p = _deathExpPool.acquire();
+    if (!p) break;
+    const src = deathExpMats[Math.floor(Math.random() * deathExpMats.length)];
+    p.material.color.copy(src.color);
+    p.material.opacity = 1;
+    p.material.transparent = true;
     p.position.set(x, wy + 1, z);
-    scene.add(p);
+    p.scale.setScalar(1);
+    p.visible = true;
     const speed = 3 + Math.random() * 6;
     const ang = Math.random() * Math.PI * 2;
     splashParticles.push({
@@ -4477,6 +4492,7 @@ function spawnDeathExplosion(x, z) {
       vz: Math.sin(ang) * speed,
       life: 0.7 + Math.random() * 0.3,
       isRing: false,
+      pool: _deathExpPool,
     });
   }
 }
@@ -5420,16 +5436,29 @@ function addFireballMesh(fb) {
   fireballMeshes.set(fb.id, group);
 }
 
+// Fire-trail particle pool — keeps fireball combat from churning the
+// GC. ~16 Hz spawn rate per fireball, 0.4s lifetime, so a single
+// fireball uses ~6 trail meshes simultaneously; 60 is enough headroom
+// for 3-4 simultaneous fireballs.
+let _fbTrailPool = null;
 function spawnFireTrail(x, y, z, size) {
-  const mat = fbTrailMats[Math.floor(Math.random() * 4)].clone();
-  const m = new THREE.Mesh(fbTrailGeo, mat);
+  if (!_fbTrailPool) _fbTrailPool = makeParticlePool(fbTrailGeo, 60);
+  const m = _fbTrailPool.acquire();
+  if (!m) return;
+  // Fire-trail materials cycle through 4 warm-color variants. Pick
+  // one and copy its color/opacity onto the pooled material so we
+  // don't allocate a new clone each spawn.
+  const src = fbTrailMats[Math.floor(Math.random() * 4)];
+  m.material.color.copy(src.color);
+  m.material.opacity = src.opacity != null ? src.opacity : 1;
+  m.material.transparent = true;
   m.scale.setScalar(size * (0.8 + Math.random()));
   m.position.set(
     x + (Math.random() - 0.5) * size,
     y + (Math.random() - 0.5) * size,
     z + (Math.random() - 0.5) * size
   );
-  scene.add(m);
+  m.visible = true;
   splashParticles.push({
     mesh: m,
     vx: (Math.random() - 0.5) * 1.5,
@@ -5437,6 +5466,7 @@ function spawnFireTrail(x, y, z, size) {
     vz: (Math.random() - 0.5) * 1.5,
     life: 0.2 + Math.random() * 0.2,
     isRing: false,
+    pool: _fbTrailPool,
   });
 }
 
