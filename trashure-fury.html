@@ -2055,9 +2055,13 @@ const RIPPLE_BOAT_AMP = 0.25;
 const RIPPLE_PIRATE_AMP = 0.5;
 const RIPPLE_BOMB_AMP = 1.2;
 
-const CAMERA_HEIGHT = 8;
+// Camera nudged a bit higher and aimed up (was -4, looking onto the
+// boat's wake which dominated the view). Now the lookAt sits ~2m
+// above the wave surface so the boat ends up lower in the frame and
+// we see more horizon / what's ahead.
+const CAMERA_HEIGHT = 9;
 const CAMERA_FOLLOW_DISTANCE = 26;
-const CAMERA_LOOK_Y = -4;
+const CAMERA_LOOK_Y = 2;
 
 // Tug-boat visible hull at 0.024 scale is ≈ 9.3m long × 6.2m wide. Previous
 // extents were <25% coverage, so boats would clip through each other on the
