@@ -7028,8 +7028,15 @@ gltfLoader.load(
     monsterTex.colorSpace = THREE.SRGBColorSpace;
     pirateModelTemplate.traverse(c => {
       if (c.isMesh) {
-        c.castShadow = true;
-        c.receiveShadow = true;
+        // Shadows OFF on the pirate. The monster_ship GLTF has many
+        // sub-meshes; with castShadow:true on each, every frame
+        // the directional light has to render every sub-mesh into
+        // the shadow map. With a 512 shadow map and 30+ sub-meshes
+        // it tanked FPS the moment the pirate emerged. Boats still
+        // cast their shadows — the pirate's shadow on the water is
+        // barely visible anyway with the surface distortion.
+        c.castShadow = false;
+        c.receiveShadow = false;
         c.material = new THREE.MeshStandardMaterial({
           map: monsterTex,
           metalness: 0.1,
