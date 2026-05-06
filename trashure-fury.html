@@ -5851,158 +5851,66 @@ scene.add(hemiLight2);
 // camera restricted to its layer. Without this the crab renders pitch black.
 [ambLight, dirLight, hemiLight, hemiLight2].forEach(L => L.layers.enableAll());
 
-// -- Water (custom Gerstner-style displaced shader) --
-// Path B from the perf audit: replace the Three.js Water class with a
-// vertex-displaced subdivided plane that uses the EXACT same wave
-// formula as JS getWaveHeight(x, z, time). This lets boat physics
-// and the visible water surface line up by construction — when a
-// boat sits at a wave crest, the geometry around it crests too, and
-// foam appears at the peak. Fragment shader synthesizes:
-//   - base water color tinted by depth (cheap fake)
-//   - sun specular highlight (Phong)
-//   - foam at high crests + steep slopes
-//   - fog clamp at horizon to match the sky dome
+// -- Water --
+// Water plane effectively infinite — its edge is beyond the camera.far
+// frustum so no hard line can ever be seen where water ends. Fog handles
+// the smooth fade to horizon color.
+const waterGeometry = new THREE.PlaneGeometry(10000, 10000);
 const texLoader = new THREE.TextureLoader();
 
-// Subdivision: 220x220 = ~48k vertices over a 1500x1500 plane (~7m grid).
-// The plane is intentionally smaller than before (was 10000x10000); the
-// fog clamps the horizon long before the edge so 1500 is plenty.
-const waterGeometry = new THREE.PlaneGeometry(1500, 1500, 220, 220);
-
-// Pure-blue palette tuned to match the FOG_COLOR / sky dome.
-const _WATER_DEEP   = new THREE.Color(0x002848);
-const _WATER_BRIGHT = new THREE.Color(0x4a8fb5);
-const _FOAM_COLOR   = new THREE.Color(0xeaf3fb);
-
-const waterUniforms = {
-  uTime:        { value: 0 },
-  uAmplitude:   { value: WAVE_AMPLITUDE },
-  uFrequency:   { value: WAVE_FREQUENCY },
-  uDeepColor:   { value: _WATER_DEEP },
-  uBrightColor: { value: _WATER_BRIGHT },
-  uFoamColor:   { value: _FOAM_COLOR },
-  uSunDir:      { value: sunPos.clone().normalize() },
-  uSunColor:    { value: new THREE.Color(0xfff1c4) },
-  uFogColor:    { value: scene.fog ? scene.fog.color : new THREE.Color(0x6a8aa8) },
-  uFogNear:     { value: scene.fog && scene.fog.isFog ? scene.fog.near : 0 },
-  uFogFar:      { value: scene.fog && scene.fog.isFog ? scene.fog.far  : 600 },
-};
-
-const waterVertexShader = /* glsl */`
-  uniform float uTime;
-  uniform float uAmplitude;
-  uniform float uFrequency;
-  varying vec3 vWorldPos;
-  varying vec3 vNormal;
-  varying float vCrest;     // 0..1, how high this vertex is in [-A..+A]
-  varying float vFogDepth;  // distance to the camera (linear fog)
-
-  // Match the JS getWaveHeight() function 1:1 so boat physics
-  // (which read getWaveHeight directly for buoyancy) sit on the
-  // visible peaks. ANY change here MUST be mirrored in JS.
-  float waveHeight(float x, float z, float t) {
-    float h = sin(x * uFrequency + t * 1.2) * uAmplitude;
-    h += sin(z * uFrequency * 0.8 + t * 0.9) * uAmplitude * 0.6;
-    h += cos((x + z) * uFrequency * 0.5 + t * 0.7) * uAmplitude * 0.3;
-    return h;
-  }
-
-  void main() {
-    // Plane geometry is in local XY space; the mesh is rotated -PI/2
-    // on X so local Y maps to world -Z and the local +Z normal maps
-    // to world +Y. Easiest path: build the world-space position
-    // ourselves, displace on world Y, then project.
-    vec4 worldPos0 = modelMatrix * vec4(position, 1.0);
-    float wx = worldPos0.x;
-    float wz = worldPos0.z;
-    float h  = waveHeight(wx, wz, uTime);
-    vec3 wp  = vec3(wx, worldPos0.y + h, wz);
-
-    // Finite-difference normal: sample two neighbors and cross.
-    float eps = 0.6;
-    float hX  = waveHeight(wx + eps, wz, uTime);
-    float hZ  = waveHeight(wx, wz + eps, uTime);
-    vec3 dx = vec3(eps, hX - h, 0.0);
-    vec3 dz = vec3(0.0, hZ - h, eps);
-    vec3 nrm = normalize(cross(dz, dx));
-
-    vWorldPos = wp;
-    vNormal   = nrm;
-    vCrest    = clamp(h / uAmplitude, -1.0, 1.0) * 0.5 + 0.5;
-    vec4 mvPos = viewMatrix * vec4(wp, 1.0);
-    vFogDepth = -mvPos.z;
-    gl_Position = projectionMatrix * mvPos;
-  }
-`;
-
-const waterFragmentShader = /* glsl */`
-  precision highp float;
-  uniform vec3 uDeepColor;
-  uniform vec3 uBrightColor;
-  uniform vec3 uFoamColor;
-  uniform vec3 uSunDir;
-  uniform vec3 uSunColor;
-  uniform vec3 uFogColor;
-  uniform float uFogNear;
-  uniform float uFogFar;
-  uniform float uTime;
-  varying vec3 vWorldPos;
-  varying vec3 vNormal;
-  varying float vCrest;
-  varying float vFogDepth;
-
-  void main() {
-    vec3 N = normalize(vNormal);
-    vec3 V = normalize(cameraPosition - vWorldPos);
-    vec3 L = normalize(uSunDir);
-
-    // Fresnel: glancing angles get more bright/sky color, top-down
-    // gets the deep color. Cheap Schlick.
-    float fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-    vec3 base = mix(uDeepColor, uBrightColor, fresnel * 0.85);
-
-    // Sun specular — sharp highlight on the back of crests.
-    vec3 R = reflect(-L, N);
-    float spec = pow(max(dot(R, V), 0.0), 64.0) * 1.2;
-    vec3 sun = uSunColor * spec;
-
-    // Foam: appears where crests are sharp — high vCrest AND high
-    // local steepness (large normal tilt vs world up).
-    float steep = 1.0 - clamp(N.y, 0.0, 1.0);
-    float foam  = smoothstep(0.78, 0.96, vCrest) * 0.7
-                + smoothstep(0.18, 0.42, steep) * 0.6;
-    foam = clamp(foam, 0.0, 1.0);
-
-    vec3 col = base + sun;
-    col = mix(col, uFoamColor, foam);
-
-    // Fog clamp — same trick the previous Water shader used: at
-    // >70% fog factor, fully snap to fog color so the horizon line
-    // is invisible against the sky dome.
-    #ifdef USE_FOG
-      float fogF = smoothstep(uFogNear, uFogFar, vFogDepth);
-      fogF = smoothstep(0.0, 0.7, fogF);
-      col = mix(col, uFogColor, fogF);
-    #endif
-
-    gl_FragColor = vec4(col, 1.0);
-  }
-`;
-
-const waterMaterial = new THREE.ShaderMaterial({
-  uniforms: waterUniforms,
-  vertexShader: waterVertexShader,
-  fragmentShader: waterFragmentShader,
-  defines: { USE_FOG: '' },
-  fog: false, // we handle fog manually so we can clamp it
+const water = new Water(waterGeometry, {
+  // Reflection target — was 512x512 which costs a full second-scene
+  // render every frame at that resolution (~40% of GPU per frame).
+  // The wave normal-map distortion smears the reflection so heavily
+  // that the source resolution stops mattering past a certain point.
+  // 20x20 is essentially "sky color blob" territory — total cost is
+  // negligible (~655x pixel reduction vs original 512x512). If the
+  // reflection ever looks too uniform / washed out, bump back up
+  // toward 64-128.
+  textureWidth: 60,
+  textureHeight: 60,
+  waterNormals: new THREE.TextureLoader().load(
+    './public/assets/waternormals.jpg',
+    (tex) => { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; },
+    undefined,
+    () => {
+      new THREE.TextureLoader().load(
+        'https://threejs.org/examples/textures/waternormals.jpg',
+        (tex) => {
+          tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+          water.material.uniforms['normalSampler'].value = tex;
+        }
+      );
+    }
+  ),
+  sunDirection: sunPos.clone().normalize(),
+  sunColor:    0xfff1c4,
+  waterColor:  0x002850,   // deep navy, matches the menu's darkest gradient (rgba(0,40,80))
+  distortionScale: 6.0,
+  fog: true,
+  alpha: 1.0,
+  size: 3.0,
 });
-
-const water = new THREE.Mesh(waterGeometry, waterMaterial);
 water.rotation.x = -Math.PI / 2;
 water.position.y = 0;
-// Plane stays centered on the player to keep the high-poly area
-// always under the camera. Updated each frame in the game loop.
-water.frustumCulled = false;
+// Water shader fog clamp — at high fog factor (>70%) the output snaps to
+// exact FOG_COLOR. Makes distant water pixel-identical to the sky dome
+// at the horizon, eliminating the color-mismatch line WITHOUT needing
+// scene.background (which masked the countdown view).
+water.material.onBeforeCompile = (shader) => {
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <fog_fragment>',
+    `#ifdef USE_FOG
+      #ifdef FOG_EXP2
+        float _clampFogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+      #else
+        float _clampFogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+      #endif
+      _clampFogFactor = smoothstep(0.0, 0.7, _clampFogFactor);
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, _clampFogFactor);
+    #endif`
+  );
+};
 scene.add(water);
 
 // ---- 3D WAVE RINGS — torus wake rings behind boats ----
@@ -12181,13 +12089,7 @@ function gameLoop(timestamp) {
       if (crabIntroGroup) removeCrabIntro();
     }
     // During countdown: render scene + camera but don't move anything
-    water.material.uniforms.uTime.value = gameTime;
-    // Keep the high-poly water plane centered on the player so the
-    // 1500x1500 patch always covers the camera view.
-    if (typeof localPlayer !== 'undefined' && localPlayer) {
-      water.position.x = localPlayer.x;
-      water.position.z = localPlayer.z;
-    }
+    water.material.uniforms['time'].value = gameTime * 0.5;
     updateCrabIntro(dt, countdownTimer);
 
     // Position all boats so they're visible during countdown
