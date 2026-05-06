@@ -7561,17 +7561,11 @@ function makeBotEntity(idx) {
   // scaled — a child light would inherit the scale and collapse to nothing.
   // We reposition it each frame in the game loop.
   if (isHydro) {
-    // Two warm-white scene-level lights for Hydronaute. The top light is
-    // moderate (not too strong or the deck goes white), the lower light
-    // fills the hull sides that face the water.
-    const hydroLight = new THREE.PointLight(0xfff4e0, 15.0, 45, 2);
-    hydroLight.position.set(bot.x, 4.0, bot.z);
-    scene.add(hydroLight);
-    const hydroLight2 = new THREE.PointLight(0xfff4e0, 12.0, 40, 2);
-    hydroLight2.position.set(bot.x, 1.5, bot.z);
-    scene.add(hydroLight2);
-    bot.boatLight = hydroLight;
-    bot.boatLight2 = hydroLight2;
+    // Hydronaute warm-white lights disabled for performance. The bot
+    // is rarely close enough to the player for the falloff to matter,
+    // and the strong directional sun + emissive material below give it
+    // enough definition. Keeping bot.boatLight unset means the
+    // per-frame light-positioning loop short-circuits cleanly.
     // Very subtle emissive lift — just enough to raise shadow floor,
     // not enough to tint or flatten the texture.
     mesh.traverse(c => {
@@ -11574,12 +11568,15 @@ function initGame() {
   // scaled ×0.012, so attaching lights as children inherits that scale and
   // they collapse to a tiny dot. Instead, add lights to the scene and
   // reposition them each frame (see updateBoatLights() in the game loop).
-  playerLightMain = new THREE.PointLight(0xffd9a0, 18.0, 45, 2);
-  scene.add(playerLightMain);
-  playerLightBow = new THREE.PointLight(0xffe4b0, 10.0, 28, 2);
-  scene.add(playerLightBow);
-  playerLightStern = new THREE.PointLight(0xffe4b0, 8.0, 24, 2);
-  scene.add(playerLightStern);
+  // Player boat point lights — disabled for performance. Three dynamic
+  // PointLights with decay=2 and ranges 24-45 forced extra per-pixel
+  // shading on the water plane and any nearby geometry every frame.
+  // The directional sun + ACES tone mapping carry the lighting fine
+  // on their own. updateBoatLights() short-circuits when these are
+  // null (see `if (playerLightMain && localPlayer)` guard).
+  playerLightMain = null;
+  playerLightBow = null;
+  playerLightStern = null;
 
   // Boost flare: emissive glow mesh that sits at the bow only during turbo.
   // Additive-blended + toneMapped:false so it stays visible under daylight,
