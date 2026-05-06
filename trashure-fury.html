@@ -5913,14 +5913,18 @@ const waveBumps = [];
 const MAX_WAVE_BUMPS = 40;
 
 const waveBumpGeo = new THREE.TorusGeometry(1, 0.35, 8, 24);
-const waveBumpMat = new THREE.MeshPhysicalMaterial({
+// Wake-ring material — was MeshPhysicalMaterial with transmission:0.6
+// which forces a second scene-render pass per ring (refraction
+// rendertarget). With MAX_WAVE_BUMPS = 40 simultaneous rings, that's
+// 40 extra render passes on busy moments. MeshBasicMaterial at 0.15
+// opacity reads almost identical against the ocean — the rings are
+// short-lived expanding outlines, not glassy lenses.
+const waveBumpMat = new THREE.MeshBasicMaterial({
   color: 0xccddee,
   transparent: true,
   opacity: 0.15,
-  roughness: 0.1,
-  metalness: 0.0,
-  transmission: 0.6,
   side: THREE.DoubleSide,
+  depthWrite: false,
 });
 
 const wakeMatPool = [];
