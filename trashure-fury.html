@@ -9366,7 +9366,11 @@ function _typewriteTip(html) {
   const W = 160, H = 200;
   canvas.width  = W * dpr;
   canvas.height = H * dpr;
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+  // antialias OFF: 160×200 is too small for the AA cost to be visible
+  // — the texture-baked outlines do the job. preserveDrawingBuffer OFF:
+  // we never read pixels back, and keeping it on disables the browser's
+  // swap-chain "don't care" optimization (~2× more GPU work per frame).
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false });
   renderer.setPixelRatio(dpr);
   renderer.setSize(W, H, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -9467,6 +9471,10 @@ function _typewriteTip(html) {
     (err) => { console.warn('REPO robot failed to load', err); window.__repo.error = String(err); }
   );
 
+  // Track whether we've drawn the silent pose yet so we render it
+  // exactly once when the robot first goes idle, then skip until it
+  // starts talking again. Avoids 30 fps of wasted GL submits.
+  let silentDrawn = false;
   const tick = (t) => {
     requestAnimationFrame(tick);
     const now = t * 0.001;
@@ -9475,8 +9483,9 @@ function _typewriteTip(html) {
     if (robot) {
       const talking = canvas.classList.contains('talking');
       const dt = now - lastClockTime;
-      // Talking: run the Greet clip. Silent: clamp to frame 0 with
-      // timeScale 0 so no time advances and the skeleton is fully still.
+      // Talking: run the Greet clip + sway. Silent: clamp to frame 0
+      // with timeScale 0 and skip the render entirely after the first
+      // pass (the canvas keeps its last frame on screen).
       if (mixer && greetAction) {
         if (talking) {
           greetAction.timeScale = 1.6;
@@ -9488,19 +9497,23 @@ function _typewriteTip(html) {
         }
       }
       lastClockTime = now;
-      // Body pose: fully frozen when silent (no sway, no bounce, no
-      // rotation — the idle Greet pose alone). Lively when talking.
       const Y_BASE = -1.75;
       if (talking) {
         const swayS = 2.6;
         robot.rotation.y = Math.sin(now * swayS * 0.6) * 0.22;
         robot.position.y = Y_BASE + Math.sin(now * swayS * 1.1) * 0.06;
-      } else {
+        silentDrawn = false;
+        renderer.render(scene, camera);
+      } else if (!silentDrawn) {
         robot.rotation.set(0, 0, 0);
         robot.position.y = Y_BASE;
+        renderer.render(scene, camera);
+        silentDrawn = true;
       }
+      // else: silent + already drawn → skip render entirely.
+    } else {
+      renderer.render(scene, camera);
     }
-    renderer.render(scene, camera);
   };
   requestAnimationFrame(tick);
 })();
