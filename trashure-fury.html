@@ -12069,12 +12069,9 @@ function gameLoop(timestamp) {
     makePirateEntity(pirates.length, true);
     spawnFloatingText(0, 0, tr('float_pirate_reinforcement'), '#ff2200');
   }
-  if (!extraPirateWave2 && gameTime >= GAME_DURATION - 30) {
-    extraPirateWave2 = true;
-    _wave2StartTime = performance.now() / 1000;
-    makePirateEntity(pirates.length, true);
-    spawnFloatingText(0, 0, tr('float_last_reinforcement'), '#ff2200');
-  }
+  // Final pirate wave (was at GAME_DURATION-30) disabled — caps total
+  // pirate count at 2. The third ship was tipping busy endgame moments
+  // into FPS drops and crowding the small playfield.
   } // end !_mpPiratesRemote
 
   // --- Pre-ending fade-out ---
@@ -14455,6 +14452,18 @@ function beginSolo() {
 }
 window._beginSolo = beginSolo;
 
+// Auto-launch solo when the page loads with #play in the URL.
+// Set by _rejoinSession (the REJOUER button) before location.reload()
+// so the player doesn't have to click LARGUER LES AMARRES again
+// after the fresh-state reload.
+if (location.hash === '#play') {
+  // Clean the hash so a manual refresh later doesn't keep auto-launching.
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  // Defer one tick so all the on-page bindings (start-btn, name input
+  // listener, etc.) have a chance to register first.
+  setTimeout(() => { try { beginSolo(); } catch (e) {} }, 0);
+}
+
 // ============================================================
 // Soft rejoin — restart a personal 3-min session without reloading.
 // Triggered by the gameover overlay's "REJOUER" button and fired
@@ -14463,68 +14472,20 @@ window._beginSolo = beginSolo;
 // entry stays visible to witnesses), then resets local race state
 // so the existing game loop can continue from a clean slate.
 // ============================================================
+// REJOUER button → full page reload + auto-launch flag.
+// The previous "soft rejoin" (keep page alive, zero stats) left
+// too much carryover state — old pirates still alive, bots with
+// stale scores, extraPirateWave flags stuck true, whaleSpawned
+// stuck true, upgrade chain locked. Users reported it dumping
+// them back to the menu or starting a corrupted round.
+// Full reload is the only reliable "from zero" — every variable
+// re-initialised from its declared default. The hash flag lets
+// the page auto-click LARGUER LES AMARRES after assets load so
+// the player doesn't have to dismiss the menu screen twice.
 function _rejoinSession() {
-  // Ask the server for a fresh session entry. Safe to call even if
-  // the WS is closed — the client continues in local-only mode.
   try { _mpSend({ type: 'rejoin' }); } catch (e) {}
-
-  // Hide the gameover overlay so the game-screen becomes visible again.
-  const overlay = document.getElementById('gameover-overlay');
-  if (overlay) overlay.classList.remove('active');
-
-  // Fade the end-theme out; normal in-game audio resumes below.
-  try {
-    if (typeof themeEndgameAudio !== 'undefined' && themeEndgameAudio) {
-      themeEndgameAudio.pause();
-      themeEndgameAudio.currentTime = 0;
-    }
-  } catch (e) {}
-
-  // Reset race state. The game loop currently short-circuits on
-  // `gameOver`; clearing it resumes normal updates.
-  gameTime = 0;
-  gameTimeRemaining = GAME_DURATION;
-  gameOver = false;
-  _lastTimerSec = -1; // force the timer HUD to redraw on the next frame
-
-  // Reset per-player stats for the new session. The server also
-  // zeroes its own copy when it processes the rejoin message.
-  if (typeof localPlayer !== 'undefined' && localPlayer) {
-    localPlayer.totalCollected = 0;
-    localPlayer.plasticCount = 0;
-    localPlayer.health = MAX_HEALTH;
-    localPlayer.boostEnergy = 1;
-    localPlayer.vx = 0;
-    localPlayer.vz = 0;
-    localPlayer.lastHitTime = -999;
-    // Respawn at a fresh spot so the player isn't stuck where their
-    // previous session ended (often mid-combat or on an island edge).
-    try {
-      if (typeof findRespawnPoint === 'function') {
-        const sp = findRespawnPoint();
-        localPlayer.x = sp.x;
-        localPlayer.z = sp.z;
-      } else if (typeof SPAWN_CORNERS !== 'undefined' && SPAWN_CORNERS.length) {
-        const corner = SPAWN_CORNERS[
-          (_mp && _mp.mySeatIdx >= 0 ? _mp.mySeatIdx : 0) % SPAWN_CORNERS.length
-        ];
-        localPlayer.x = corner.x;
-        localPlayer.z = corner.z;
-      }
-      localPlayer.rotation = Math.atan2(-localPlayer.x, -localPlayer.z);
-    } catch (e) {}
-  }
-  // Reset combo state + upgrade timers so the new run starts fresh.
-  try { comboCount = 0; comboTimer = 0; } catch (e) {}
-  // Make sure the gameOver flag isn't stuck before the overlay CSS
-  // settles — without this the loop still short-circuits for a frame.
-  respawnActive = false;
-  countdownActive = false;
-
-  // Resume ambient sound that showGameOver() stopped.
-  try { startOceanAmbient(); } catch (e) {}
-  try { startMotorLoop(); } catch (e) {}
-  try { startThemeMusic(); } catch (e) {}
+  location.hash = '#play';
+  location.reload();
 }
 window._rejoinSession = _rejoinSession;
 
