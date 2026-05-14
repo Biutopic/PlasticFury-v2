@@ -14681,11 +14681,12 @@ try {
 // the player doesn't have to dismiss the menu screen twice.
 function _rejoinSession() {
   try { _mpSend({ type: 'rejoin' }); } catch (e) {}
-  // Per user request: REJOUER returns to the menu so the player
-  // re-confirms email + consent before each new session. The auto-
-  // launch flag is gone — we just navigate to the clean URL. Email
-  // pre-fills from localStorage; the consent checkbox is always
-  // empty on page load so the player has to tick it again.
+  // REJOUER goes back to the menu AND clears the saved email + the
+  // consent timestamp — the next session is treated as a brand-new
+  // player. Each opt-in is fresh: empty email field, unticked
+  // checkbox, fresh server record.
+  try { localStorage.removeItem('ti_email'); } catch (e) {}
+  try { localStorage.removeItem('ti_consent_at'); } catch (e) {}
   location.replace(location.pathname);
 }
 window._rejoinSession = _rejoinSession;
