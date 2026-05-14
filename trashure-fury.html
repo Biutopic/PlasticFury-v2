@@ -14452,17 +14452,29 @@ function beginSolo() {
 }
 window._beginSolo = beginSolo;
 
-// Auto-launch solo when the page loads with #play in the URL.
-// Set by _rejoinSession (the REJOUER button) before location.reload()
-// so the player doesn't have to click LARGUER LES AMARRES again
-// after the fresh-state reload.
-if (location.hash === '#play') {
-  // Clean the hash so a manual refresh later doesn't keep auto-launching.
-  try { history.replaceState(null, '', location.pathname); } catch (e) {}
-  // Defer one tick so all the on-page bindings (start-btn, name input
-  // listener, etc.) have a chance to register first.
-  setTimeout(() => { try { beginSolo(); } catch (e) {} }, 0);
-}
+// Auto-launch solo when the page loads with ?play=1 in the URL.
+// Set by _rejoinSession (the REJOUER button) before navigating so
+// the player skips the menu after the fresh-state reload.
+// Query string (not hash) — survives reloads reliably across browsers.
+// Waits for the window 'load' event so every script in the page has
+// finished parsing and every DOM element + listener is wired before
+// we click "go". setTimeout(0) was racing GLTF loader registration
+// in some browsers, leaving the player on the menu.
+(() => {
+  try {
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('play') !== '1') return;
+    console.log('[Trashure] ?play=1 detected — auto-launching solo after load');
+    // Strip the param so a later manual refresh doesn't keep auto-launching.
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    const launch = () => { try { beginSolo(); } catch (e) { console.warn('[Trashure] auto-launch beginSolo threw', e); } };
+    if (document.readyState === 'complete') {
+      setTimeout(launch, 0);
+    } else {
+      window.addEventListener('load', () => setTimeout(launch, 0), { once: true });
+    }
+  } catch (e) { /* noop */ }
+})();
 
 // ============================================================
 // Soft rejoin — restart a personal 3-min session without reloading.
@@ -14484,8 +14496,12 @@ if (location.hash === '#play') {
 // the player doesn't have to dismiss the menu screen twice.
 function _rejoinSession() {
   try { _mpSend({ type: 'rejoin' }); } catch (e) {}
-  location.hash = '#play';
-  location.reload();
+  // Single navigation with the auto-launch flag in the query string.
+  // location.replace() is a true navigation (browser reloads fresh)
+  // and keeps the query string in the destination URL. Using hash +
+  // reload was unreliable — some browsers preserved the hash but
+  // some test environments stripped it on the reload.
+  location.replace(location.pathname + '?play=1');
 }
 window._rejoinSession = _rejoinSession;
 
