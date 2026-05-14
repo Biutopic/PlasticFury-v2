@@ -14655,29 +14655,11 @@ try {
   }
 } catch (e) {}
 
-// Auto-launch solo when the page loads with ?play=1 in the URL.
-// Set by _rejoinSession (the REJOUER button) before navigating so
-// the player skips the menu after the fresh-state reload.
-// Query string (not hash) — survives reloads reliably across browsers.
-// Waits for the window 'load' event so every script in the page has
-// finished parsing and every DOM element + listener is wired before
-// we click "go". setTimeout(0) was racing GLTF loader registration
-// in some browsers, leaving the player on the menu.
-(() => {
-  try {
-    const qs = new URLSearchParams(location.search);
-    if (qs.get('play') !== '1') return;
-    console.log('[Trashure] ?play=1 detected — auto-launching solo after load');
-    // Strip the param so a later manual refresh doesn't keep auto-launching.
-    try { history.replaceState(null, '', location.pathname); } catch (e) {}
-    const launch = () => { try { beginSolo(); } catch (e) { console.warn('[Trashure] auto-launch beginSolo threw', e); } };
-    if (document.readyState === 'complete') {
-      setTimeout(launch, 0);
-    } else {
-      window.addEventListener('load', () => setTimeout(launch, 0), { once: true });
-    }
-  } catch (e) { /* noop */ }
-})();
+// (Auto-launch on ?play=1 was previously here. Removed: REJOUER now
+// reloads back to the menu so the player re-confirms email + consent
+// before each new session. The consent checkbox naturally resets on
+// every page load, which is the per-session opt-in the protocol
+// expects.)
 
 // ============================================================
 // Soft rejoin — restart a personal 3-min session without reloading.
@@ -14699,12 +14681,12 @@ try {
 // the player doesn't have to dismiss the menu screen twice.
 function _rejoinSession() {
   try { _mpSend({ type: 'rejoin' }); } catch (e) {}
-  // Single navigation with the auto-launch flag in the query string.
-  // location.replace() is a true navigation (browser reloads fresh)
-  // and keeps the query string in the destination URL. Using hash +
-  // reload was unreliable — some browsers preserved the hash but
-  // some test environments stripped it on the reload.
-  location.replace(location.pathname + '?play=1');
+  // Per user request: REJOUER returns to the menu so the player
+  // re-confirms email + consent before each new session. The auto-
+  // launch flag is gone — we just navigate to the clean URL. Email
+  // pre-fills from localStorage; the consent checkbox is always
+  // empty on page load so the player has to tick it again.
+  location.replace(location.pathname);
 }
 window._rejoinSession = _rejoinSession;
 
