@@ -672,6 +672,81 @@ export default class TrashureRoom implements Party.Server {
     );
   }
 
+  // ---- HTTP routes ----
+  // The consent form on the menu POSTs to /parties/main/consents
+  // with { email, consent, name, lang, at, ua }. We persist each
+  // record into the durable-object storage keyed by a timestamped
+  // id so the admin can list/export later. CORS allowed so the
+  // GitHub Pages site can reach us directly from the browser.
+  async onRequest(req: Party.Request): Promise<Response> {
+    const cors: Record<string, string> = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: cors });
+    }
+    if (req.method === "POST") {
+      let body: any = {};
+      try { body = await req.json(); } catch {
+        return new Response(JSON.stringify({ ok: false, err: "bad_json" }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      const email = String(body.email || "").trim().toLowerCase();
+      const consent = body.consent === true;
+      // Server-side validation: simple shape check + reject if consent
+      // wasn't explicitly true (don't trust client-side flag alone).
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 200) {
+        return new Response(JSON.stringify({ ok: false, err: "bad_email" }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      if (!consent) {
+        return new Response(JSON.stringify({ ok: false, err: "no_consent" }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      // Build the stored record. Timestamp-prefixed key keeps records
+      // sortable by chronology; suffix is short random so simultaneous
+      // submissions don't collide. ua + lang capped so a hostile
+      // client can't blow up storage by sending megabytes.
+      const now = Date.now();
+      const rec = {
+        email,
+        consent: true,
+        name: String(body.name || "").slice(0, 32),
+        lang: String(body.lang || "").slice(0, 8),
+        at: now,
+        ua: String(body.ua || "").slice(0, 240),
+      };
+      const key = "consent:" + now.toString(36).padStart(10, "0") + ":"
+                + Math.random().toString(36).slice(2, 8);
+      try {
+        // @ts-ignore — Party.Storage is provided by the runtime; the
+        // local stub doesn't declare it, but the actual server has it.
+        await (this.room as any).storage.put(key, rec);
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, err: "storage" }), {
+          status: 500, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200, headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+    if (req.method === "GET") {
+      // Lightweight liveness check + optional list endpoint. Without
+      // an admin auth token we don't expose the records list — just
+      // confirm the room is reachable.
+      return new Response(JSON.stringify({ ok: true, room: "consents" }), {
+        status: 200, headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+    return new Response("Method Not Allowed", { status: 405, headers: cors });
+  }
+
   // ---- lifecycle ----
   onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     // Client sends a persistent id in the WS URL query. On reconnect

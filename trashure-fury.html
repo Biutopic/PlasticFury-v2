@@ -269,14 +269,43 @@
       font-size: 0.75rem; color: var(--muted-fg); text-transform: uppercase;
       letter-spacing: 2px; margin-bottom: 8px; text-align: left;
     }
-    #name-input {
+    #name-input, #email-input {
       width: 100%; padding: 12px 16px;
       background: rgba(0,0,0,0.4); border: 1px solid var(--border);
       border-radius: 8px; color: var(--foreground); font-size: 1rem;
       font-family: var(--font-body); outline: none; transition: border-color 0.2s;
-      margin-bottom: 24px;
+      margin-bottom: 18px;
     }
-    #name-input:focus { border-color: var(--primary); }
+    #name-input:focus, #email-input:focus { border-color: var(--primary); }
+    #email-input.invalid { border-color: #ff5a3c; }
+
+    /* Consent row — small checkbox + small disclaimer. Kept readable
+       without dominating the menu. Required field; the button is
+       disabled until it's checked. */
+    #consent-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      margin: 4px 0 14px;
+      font-family: var(--font-body);
+      font-size: 0.78rem; line-height: 1.4;
+      color: rgba(200, 225, 245, 0.78);
+      text-align: left;
+      cursor: pointer;
+    }
+    #consent-row input[type="checkbox"] {
+      flex: 0 0 auto;
+      margin-top: 2px;
+      width: 16px; height: 16px;
+      accent-color: #00ffdd;
+      cursor: pointer;
+    }
+    #start-error {
+      min-height: 1.2em;
+      margin: 0 0 8px;
+      font-family: var(--font-body);
+      font-size: 0.78rem;
+      color: #ff7a5a;
+      text-align: left;
+    }
     #start-btn {
       width: 100%; padding: 18px;
       background: linear-gradient(135deg, #00ffdd 0%, #00c8ff 50%, #e8c356 100%);
@@ -1775,13 +1804,23 @@
 
     <div class="start-label" data-i18n="name_label">Nom du Capitaine</div>
     <input type="text" id="name-input" placeholder="Entre ton nom..." maxlength="16" value="Capitaine" data-i18n-placeholder="name_placeholder">
+
+    <div class="start-label" data-i18n="email_label">Email</div>
+    <input type="email" id="email-input" placeholder="vous@exemple.com" maxlength="120" autocomplete="email" required>
+
+    <label id="consent-row">
+      <input type="checkbox" id="consent-input" required>
+      <span data-i18n="consent_text">J&rsquo;accepte d&rsquo;&ecirc;tre contact&eacute; et que mes donn&eacute;es de jeu soient utilis&eacute;es pour entra&icirc;ner le mod&egrave;le de l&rsquo;Hydronaute IA.</span>
+    </label>
+    <div id="start-error" role="alert"></div>
+
     <div class="start-row">
       <!-- LARGUER LES AMARRES launches solo directly while online +
            split-screen multiplayer are parked. _beginGame and
            _beginSplit stay defined elsewhere in the page so the
            code paths can be re-surfaced once the multiplayer
            experiences are ready. -->
-      <button id="start-btn" onclick="if(window._beginSolo)window._beginSolo()" data-i18n="start_btn">LARGUER LES AMARRES</button>
+      <button id="start-btn" onclick="if(window._submitConsentAndPlay)window._submitConsentAndPlay()" data-i18n="start_btn">LARGUER LES AMARRES</button>
       <button id="tutorial-btn" onclick="if(window._openTutorial)window._openTutorial()" data-i18n="tuto_btn">TUTORIEL</button>
     </div>
     <div id="start-coming-soon" data-i18n="start_coming_soon">Multijoueur (en ligne et &eacute;cran partag&eacute;) : bient&ocirc;t disponible</div>
@@ -14452,6 +14491,90 @@ function beginSolo() {
 }
 window._beginSolo = beginSolo;
 
+// ============================================================
+// CONSENT FORM
+// ============================================================
+// Mandatory email + consent checkbox before any session starts. The
+// research-protocol framing of the game (data collected to train the
+// Hydronaute IA navigation model) requires an explicit opt-in per
+// player. We POST {email, consent, lang, ua, at} to the PartyKit
+// server's /parties/main/consent room so each record persists in
+// the durable-object storage there. The game only proceeds after
+// the POST succeeds — if the server is unreachable the player sees
+// an error and can retry.
+const _CONSENT_URL = (() => {
+  // Reuse the same PartyKit deployment the online MP uses, but POST
+  // to a dedicated "consents" room so the record key namespace is
+  // separated from gameplay state.
+  const host = 'trashure-island.basiloco.partykit.dev';
+  return 'https://' + host + '/parties/main/consents';
+})();
+function _showStartError(msg) {
+  const el = document.getElementById('start-error');
+  if (el) el.textContent = msg || '';
+}
+function _emailLooksValid(s) {
+  // Simple shape check — server will re-validate. The strict regex
+  // here is just to catch obvious typos before the round-trip.
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
+}
+async function _submitConsentAndPlay() {
+  const emailEl   = document.getElementById('email-input');
+  const consentEl = document.getElementById('consent-input');
+  const startBtn  = document.getElementById('start-btn');
+  const email = (emailEl && emailEl.value || '').trim().toLowerCase();
+  const consent = !!(consentEl && consentEl.checked);
+  // Clear stale error class
+  if (emailEl) emailEl.classList.remove('invalid');
+  if (!email || !_emailLooksValid(email)) {
+    if (emailEl) { emailEl.classList.add('invalid'); emailEl.focus(); }
+    _showStartError(tr('consent_err_email'));
+    return;
+  }
+  if (!consent) {
+    if (consentEl) consentEl.focus();
+    _showStartError(tr('consent_err_required'));
+    return;
+  }
+  _showStartError('');
+  if (startBtn) { startBtn.disabled = true; startBtn.style.opacity = '0.6'; }
+  try {
+    const res = await fetch(_CONSENT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        consent: true,
+        name: (nameInput && nameInput.value || '').trim().slice(0, 16),
+        lang: (typeof I18N_LANG !== 'undefined' ? I18N_LANG : 'fr'),
+        at: Date.now(),
+        ua: (navigator.userAgent || '').slice(0, 180),
+      }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // Persist locally so a returning player doesn't have to re-fill
+    // the form every visit. Server still records each submission for
+    // research-data auditing.
+    try { localStorage.setItem('ti_email', email); } catch (e) {}
+    try { localStorage.setItem('ti_consent_at', String(Date.now())); } catch (e) {}
+    if (startBtn) { startBtn.disabled = false; startBtn.style.opacity = ''; }
+    beginSolo();
+  } catch (e) {
+    if (startBtn) { startBtn.disabled = false; startBtn.style.opacity = ''; }
+    _showStartError(tr('consent_err_network'));
+    console.warn('[Trashure] consent POST failed', e);
+  }
+}
+window._submitConsentAndPlay = _submitConsentAndPlay;
+// Restore last-used email so returning players don't re-type it.
+try {
+  const saved = localStorage.getItem('ti_email');
+  if (saved) {
+    const ev = document.getElementById('email-input');
+    if (ev) ev.value = saved;
+  }
+} catch (e) {}
+
 // Auto-launch solo when the page loads with ?play=1 in the URL.
 // Set by _rejoinSession (the REJOUER button) before navigating so
 // the player skips the menu after the fresh-state reload.
@@ -14572,7 +14695,12 @@ startBtn.addEventListener('click', beginGame);
 // (Was beginGame, which auto-connected to the PartyKit server even
 // though the visible button was wired to solo. That's how two
 // browsers ended up seeing each other in the leaderboard.)
-nameInput.addEventListener('keydown', (e) => { if (e.code === 'Enter') beginSolo(); });
+// Enter in any of the start-screen text fields submits the consent
+// form rather than calling beginSolo directly — the email + consent
+// check has to run on this path too.
+nameInput.addEventListener('keydown', (e) => { if (e.code === 'Enter') _submitConsentAndPlay(); });
+const _emailInputEl = document.getElementById('email-input');
+if (_emailInputEl) _emailInputEl.addEventListener('keydown', (e) => { if (e.code === 'Enter') _submitConsentAndPlay(); });
 // Global fallback for onclick attribute
 window._beginGame = beginGame;
 
@@ -15257,6 +15385,11 @@ const I18N_STRINGS = {
     tip_body: 'Le plastique <b style="color:#ff88bb">rose</b> te soigne. \u00C9vite les pirates et la <b style="color:#4488cc">baleine</b> !',
     name_label: 'Nom du Capitaine',
     name_placeholder: 'Entre ton nom...',
+    email_label: 'Email',
+    consent_text: 'J\u2019accepte d\u2019\u00EAtre contact\u00E9 par BIUTOPIC et que mes donn\u00E9es de jeu soient utilis\u00E9es pour entra\u00EEner le mod\u00E8le de l\u2019Hydronaute IA.',
+    consent_err_email: 'Adresse email invalide.',
+    consent_err_required: 'Tu dois cocher la case pour participer.',
+    consent_err_network: 'Impossible d\u2019enregistrer ton consentement. R\u00E9essaye dans un instant.',
     start_btn: 'LARGUER LES AMARRES',
     tuto_btn: 'TUTORIEL',
     protocol_btn: 'NOTRE PROTOCOLE',
@@ -15379,6 +15512,11 @@ const I18N_STRINGS = {
     tip_body: '<b style="color:#ff88bb">Pink</b> plastic heals you. Dodge the pirates and the <b style="color:#4488cc">whale</b>!',
     name_label: 'Captain name',
     name_placeholder: 'Enter your name...',
+    email_label: 'Email',
+    consent_text: 'I consent to be contacted by BIUTOPIC and to have my gameplay data used to train the Hydronaute AI model.',
+    consent_err_email: 'Invalid email address.',
+    consent_err_required: 'You must tick the box to play.',
+    consent_err_network: 'Could not record your consent. Please try again in a moment.',
     start_btn: 'CAST OFF',
     tuto_btn: 'TUTORIAL',
     protocol_btn: 'OUR PROTOCOL',
