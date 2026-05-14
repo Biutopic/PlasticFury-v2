@@ -3406,33 +3406,36 @@ function updateMotorLoop(dt, engineRunning, accelerating, boosting) {
     motorLoop.playbackRate = Math.max(0.4, Math.min(2.0, _motorRate));
   } catch (e) { /* some browsers throttle playbackRate changes */ }
 
-  // Controller rumble synced to the motor. Very subtle continuous
-  // background pulse so the player can FEEL the engine through their
-  // hands. Strength scales with motor volume (so idle is barely there,
-  // cruise hums faintly, boost trembles). Re-issued periodically — the
-  // Gamepad API has no continuous rumble, only timed effects. We skip
-  // the re-issue right after a hit so the hit pulse isn't clobbered.
+  // Controller rumble synced to the motor. Light periodic pulses —
+  // not a continuous hum. Idle is almost imperceptible; boost is
+  // noticeable but still subtle. Crash rumbles (1.0) easily dominate
+  // these. Interval longer than duration so it reads as a tap, not
+  // a buzz; suppressed for 250ms after a hit so collision pulses
+  // aren't clobbered.
   if (typeof _GP !== 'undefined' && _GP.connected && engineRunning) {
     const _now = performance.now();
     if (_now - _lastHitRumbleAt > 250 &&
         _now >= (window._engineRumbleNextAt || 0)) {
-      // Map _motorVol [~0.03..0.48] → strong magnitude [0.04..0.18].
-      // Capped low — this should be FELT, not announce itself.
-      const strong = Math.min(0.20, 0.03 + _motorVol * 0.40);
-      const weak   = strong * 0.55;
+      // Idle ≈ 0.02, cruise ≈ 0.04, boost ≈ 0.12. Capped low on
+      // purpose — engine is a "you can feel it if you focus" cue,
+      // not a steady distraction.
+      const strong = Math.min(0.13, 0.02 + _motorVol * 0.22);
+      const weak   = strong * 0.5;
       try {
         const gp = navigator.getGamepads()[_GP.index];
         if (gp && gp.vibrationActuator) {
           gp.vibrationActuator.playEffect('dual-rumble', {
             startDelay: 0,
-            duration: 320,
+            duration: 110,         // short tap
             weakMagnitude: weak,
             strongMagnitude: strong,
           });
         }
       } catch (e) {}
-      // Overlap slightly so the pulses chain into a continuous hum.
-      window._engineRumbleNextAt = _now + 280;
+      // Long gap between taps so it stays a "light pulse", not a hum.
+      // Faster when boosting so the engine feels more alive at speed.
+      const gap = boosting ? 520 : 850;
+      window._engineRumbleNextAt = _now + gap;
     }
   }
 }
