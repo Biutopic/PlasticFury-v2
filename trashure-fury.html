@@ -2058,7 +2058,7 @@
        .hint-gp. Each span is i18n-keyed independently. -->
   <div id="controls-hint" class="glass-panel">
     <span class="hint-kb" data-i18n="controls_hint_kb">ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; &Eacute;vitez Baleine &amp; Hydronaute !</span>
-    <span class="hint-gp" data-i18n="controls_hint_gp">Stick Naviguer &middot; L2/R2 Boost &middot; A Boule de feu &middot; X/Y/B Am&eacute;liorations</span>
+    <span class="hint-gp" data-i18n="controls_hint_gp">A Avancer &middot; Stick Tourner &middot; R2 Boost &middot; L2 Boule de feu &middot; X/Y/B Am&eacute;liorations</span>
   </div>
 
   <!-- Combo display -->
@@ -8723,6 +8723,9 @@ function pollGamepad() {
   // Stick Y is inverted in the Standard Mapping (up = -1, down = +1).
   // Apply a radial deadzone so a slightly-off-center stick at rest
   // doesn't ghost-drive the boat.
+  // Steering + reverse from the stick; throttle (forward) comes from
+  // A so the player can cruise without holding the stick up — less
+  // thumb fatigue. Stick-up still works in parallel for muscle memory.
   const lx = gp.axes[_GP_AXIS_LX] || 0;
   const ly = gp.axes[_GP_AXIS_LY] || 0;
   const mag = Math.sqrt(lx * lx + ly * ly);
@@ -8770,12 +8773,13 @@ function pollGamepad() {
   // the player is using A to confirm a menu button.
   const inMenu = (typeof gameStarted === 'undefined' || !gameStarted);
 
-  // --- R2 or L2 → boost (analog trigger → digital with hysteresis) ---
-  // Either trigger boosts; whichever is more comfortable for the player.
-  const boostNow = !inMenu && (
-    btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH ||
-    btnVal(_GP_BTN_L2) > _GP_TRIGGER_THRESH
-  );
+  // --- A → throttle (hold to go forward) ---
+  // Stick-up still works in parallel, but A lets the player cruise
+  // hands-free on the stick. Stick-down is the only reverse input.
+  if (!inMenu && btn(_GP_BTN_A)) input.forward = true;
+
+  // --- R2 → boost ---
+  const boostNow = !inMenu && btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH;
   const wasBoost = input.boost;
   input.boost = boostNow;
   if (boostNow && !wasBoost && localPlayer && localPlayer.boostEnergy > 0.05) {
@@ -8783,11 +8787,10 @@ function pollGamepad() {
   }
   _GP.prevBoost = boostNow;
 
-  // --- A → fire-charge (hold to charge, release to shoot) ---
-  // Mirrors the Shift keydown / keyup flow exactly. A used to be a
-  // menu-confirm and L2 was fire; flipped so the digital A is the
-  // primary action button in-game and L2 is free.
-  const fireNow = !inMenu && btn(_GP_BTN_A);
+  // --- L2 → fire-charge (hold to charge, release to shoot) ---
+  // Mirrors the Shift keydown / keyup flow exactly. Fire lives on
+  // the trigger so A stays free as a throttle/confirm button.
+  const fireNow = !inMenu && btnVal(_GP_BTN_L2) > _GP_TRIGGER_THRESH;
   if (fireNow && !_GP.prevFire && !fireCharging) {
     if (localPlayer && localPlayer.totalCollected >= FIREBALL_UNLOCK_COST) {
       fireCharging = true;
@@ -9518,8 +9521,8 @@ function _tipHtml(tip) {
       .replace(/\bEspace\b/g, 'R2')
       .replace(/\bSPACE\b/g, 'R2')
       .replace(/\bSpace\b/g, 'R2')
-      .replace(/\bSHIFT\b/g, 'A')
-      .replace(/\bShift\b/g, 'A');
+      .replace(/\bSHIFT\b/g, 'L2')
+      .replace(/\bShift\b/g, 'L2');
   }
   return html;
 }
@@ -15422,14 +15425,14 @@ function _renderTutoStep() {
       .replace(/\bWASD\b/g, 'Left stick')
       .replace(/\bEspace\b/g, 'R2')
       .replace(/\bSpace\b/g, 'R2')
-      .replace(/\bSHIFT\b/g, 'A');
+      .replace(/\bSHIFT\b/g, 'L2');
   };
   const _subKey = (k) => {
     if (!gpOn) return k;
     if (k === 'Z' || k === 'Q' || k === 'S' || k === 'D' ||
         k === 'W' || k === 'A')                       return 'STICK';
     if (k === 'ESPACE' || k === 'SPACE')              return 'R2';
-    if (k === 'SHIFT')                                return 'A';
+    if (k === 'SHIFT')                                return 'L2';
     return k;
   };
   _tutoEls.emoji.textContent = step.emoji;
@@ -16013,7 +16016,7 @@ const I18N_STRINGS = {
     fb_unlock_sub: 'Appuie sur <b>SHIFT</b> pour tirer sur les pirates',
     controls_hint: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
     controls_hint_kb: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
-    controls_hint_gp: 'Stick Naviguer &middot; L2/R2 Boost &middot; A Boule de feu &middot; X/Y/B Am\u00E9liorations',
+    controls_hint_gp: 'A Avancer &middot; Stick Tourner &middot; R2 Boost &middot; L2 Boule de feu &middot; X/Y/B Am\u00E9liorations',
     pause_title: 'PAUSE',
     pause_hint_kb: 'Echap pour reprendre',
     pause_hint_gp: 'Home / Start pour reprendre',
@@ -16147,7 +16150,7 @@ const I18N_STRINGS = {
     fb_unlock_sub: 'Press <b>SHIFT</b> to shoot pirates',
     controls_hint: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
     controls_hint_kb: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
-    controls_hint_gp: 'Stick Navigate &middot; L2/R2 Boost &middot; A Fireball &middot; X/Y/B Upgrades',
+    controls_hint_gp: 'A Forward &middot; Stick Turn &middot; R2 Boost &middot; L2 Fireball &middot; X/Y/B Upgrades',
     pause_title: 'PAUSED',
     pause_hint_kb: 'Press Esc to resume',
     pause_hint_gp: 'Press Home / Start to resume',
@@ -16262,14 +16265,14 @@ function tr(key) {
 function _gpSwap(html) {
   if (!document.body.classList.contains('gamepad-on')) return html;
   return String(html)
-    .replace(/\bZQSD\b/g, 'Stick gauche')
-    .replace(/\bWASD\b/g, 'Left stick')
+    .replace(/\bZQSD\b/g, 'Stick / A')
+    .replace(/\bWASD\b/g, 'Stick / A')
     .replace(/\bESPACE\b/g, 'R2')
     .replace(/\bEspace\b/g, 'R2')
     .replace(/\bSPACE\b/g, 'R2')
     .replace(/\bSpace\b/g, 'R2')
-    .replace(/\bSHIFT\b/g, 'A')
-    .replace(/\bShift\b/g, 'A');
+    .replace(/\bSHIFT\b/g, 'L2')
+    .replace(/\bShift\b/g, 'L2');
 }
 function applyI18n(lang) {
   const dict = I18N_STRINGS[lang] || I18N_STRINGS.fr;
