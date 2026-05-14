@@ -1704,6 +1704,18 @@
       border-radius: 4px; font-family: var(--font-heading); font-size: 0.8rem;
       color: #00d4ff; margin: 0 2px;
     }
+    /* Single-letter circular keycap — used to render ZQSD / WASD as a
+       row of round buttons, like a stylized keyboard hint. */
+    #tips-display .tip-key-circle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.5em; height: 1.5em;
+      background: rgba(0,200,255,0.2); border: 1px solid rgba(0,200,255,0.55);
+      border-radius: 50%;
+      font-family: var(--font-heading); font-size: 0.8rem; font-weight: 700;
+      color: #00d4ff; margin: 0 1px;
+      box-shadow: 0 0 6px rgba(0,200,255,0.25), inset 0 -1px 2px rgba(0,0,0,0.35);
+      vertical-align: middle; line-height: 1;
+    }
 
     /* ---- LOW HP WARNING ---- */
     #low-hp-warning {
@@ -9280,6 +9292,17 @@ const TIPS = [
 // Pick the language-appropriate payload for a tip, falling back to FR.
 function _tipHtml(tip) {
   let html = (_currentLang === 'en' && tip.htmlEn) ? tip.htmlEn : tip.html;
+  // Render ZQSD / WASD keycaps as a row of individual circular buttons
+  // (one per letter) so they read as keyboard keys, not a single pill.
+  // Only applies on keyboard — gamepad path below replaces these entirely.
+  if (!document.body.classList.contains('gamepad-on')) {
+    html = html.replace(
+      /<span class="tip-key">(ZQSD|WASD)<\/span>/g,
+      (_m, word) => word.split('').map(
+        (c) => '<span class="tip-key-circle">' + c + '</span>'
+      ).join('')
+    );
+  }
   // When a gamepad (Thorium / Xbox-style) is connected, the robot speaks
   // controller, not keyboard. Swap key references inline so the speech
   // bubble matches the tutorial overlay.
