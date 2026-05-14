@@ -2032,7 +2032,7 @@
        .hint-gp. Each span is i18n-keyed independently. -->
   <div id="controls-hint" class="glass-panel">
     <span class="hint-kb" data-i18n="controls_hint_kb">ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; &Eacute;vitez Baleine &amp; Hydronaute !</span>
-    <span class="hint-gp" data-i18n="controls_hint_gp">Stick Naviguer &middot; R2 Boost &middot; A Boule de feu &middot; X/Y/B Am&eacute;liorations</span>
+    <span class="hint-gp" data-i18n="controls_hint_gp">Stick Naviguer &middot; L2/R2 Boost &middot; A Boule de feu &middot; X/Y/B Am&eacute;liorations</span>
   </div>
 
   <!-- Combo display -->
@@ -8701,8 +8701,12 @@ function pollGamepad() {
   // the player is using A to confirm a menu button.
   const inMenu = (typeof gameStarted === 'undefined' || !gameStarted);
 
-  // --- R2 → boost (analog trigger → digital with hysteresis) ---
-  const boostNow = !inMenu && btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH;
+  // --- R2 or L2 → boost (analog trigger → digital with hysteresis) ---
+  // Either trigger boosts; whichever is more comfortable for the player.
+  const boostNow = !inMenu && (
+    btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH ||
+    btnVal(_GP_BTN_L2) > _GP_TRIGGER_THRESH
+  );
   const wasBoost = input.boost;
   input.boost = boostNow;
   if (boostNow && !wasBoost && localPlayer && localPlayer.boostEnergy > 0.05) {
@@ -15928,7 +15932,7 @@ const I18N_STRINGS = {
     fb_unlock_sub: 'Appuie sur <b>SHIFT</b> pour tirer sur les pirates',
     controls_hint: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
     controls_hint_kb: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
-    controls_hint_gp: 'Stick Naviguer &middot; R2 Boost &middot; A Boule de feu &middot; X/Y/B Am\u00E9liorations',
+    controls_hint_gp: 'Stick Naviguer &middot; L2/R2 Boost &middot; A Boule de feu &middot; X/Y/B Am\u00E9liorations',
     pause_title: 'PAUSE',
     pause_hint_kb: 'Echap pour reprendre',
     pause_hint_gp: 'Home / Start pour reprendre',
@@ -16060,7 +16064,7 @@ const I18N_STRINGS = {
     fb_unlock_sub: 'Press <b>SHIFT</b> to shoot pirates',
     controls_hint: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
     controls_hint_kb: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
-    controls_hint_gp: 'Stick Navigate &middot; R2 Boost &middot; A Fireball &middot; X/Y/B Upgrades',
+    controls_hint_gp: 'Stick Navigate &middot; L2/R2 Boost &middot; A Fireball &middot; X/Y/B Upgrades',
     pause_title: 'PAUSED',
     pause_hint_kb: 'Press Esc to resume',
     pause_hint_gp: 'Press Home / Start to resume',
