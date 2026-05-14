@@ -8751,6 +8751,21 @@ function pollGamepad() {
   const pauseNow = btn(_GP_BTN_HOME) || btn(_GP_BTN_START);
   if (pauseNow && !_GP.prevPause) togglePause();
   _GP.prevPause = pauseNow;
+
+  // Game-over overlay → A presses REJOUER. Edge-detected so a held
+  // A from the last fire press doesn't auto-click. Must come BEFORE
+  // the gameplay block so a stuck "A throttle" doesn't get in the way.
+  const goOverlay = document.getElementById('gameover-overlay');
+  if (goOverlay && goOverlay.classList.contains('active')) {
+    const aNow = btn(_GP_BTN_A);
+    if (aNow && !_GP.prevA) {
+      const goBtn = document.getElementById('gameover-btn');
+      if (goBtn) goBtn.click();
+    }
+    _GP.prevA = aNow;
+    return;
+  }
+
   // While paused: D-pad cycles between Resume / Menu, A activates.
   // Don't bleed into gameplay input below.
   if (gamePaused) {
@@ -10719,6 +10734,15 @@ function showGameOver() {
   }
 
   overlay.classList.add('active');
+  // Pre-focus the REJOUER button so a controller player can hit A
+  // immediately (and so the keyboard/Enter path also works).
+  try {
+    const goBtn = document.getElementById('gameover-btn');
+    if (goBtn) {
+      goBtn.classList.add('gp-focus');
+      goBtn.focus();
+    }
+  } catch (e) {}
 }
 
 // Legacy "REJOUER" button — now calls the soft rejoin (new server
