@@ -1760,6 +1760,32 @@
     #pause-overlay .pause-hint {
       font-size: 0.85rem; color: rgba(255,255,255,0.75); letter-spacing: 0.05em;
     }
+    #pause-overlay .pause-actions {
+      display: flex; gap: 12px; justify-content: center; margin-top: 22px;
+    }
+    #pause-overlay .pause-actions button {
+      font-family: var(--font-heading); font-size: 0.85rem; font-weight: 700;
+      letter-spacing: 0.1em;
+      padding: 10px 18px; border-radius: 8px; cursor: pointer;
+      background: rgba(0, 200, 255, 0.12);
+      border: 1px solid rgba(0, 200, 255, 0.5);
+      color: #d8f6ff;
+      transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+    }
+    #pause-overlay .pause-actions button:hover {
+      background: rgba(0, 200, 255, 0.24);
+      box-shadow: 0 0 14px rgba(0, 200, 255, 0.35);
+      transform: translateY(-1px);
+    }
+    #pause-overlay .pause-actions #pause-menu-btn {
+      background: rgba(255, 102, 102, 0.1);
+      border-color: rgba(255, 102, 102, 0.5);
+      color: #ffd5d5;
+    }
+    #pause-overlay .pause-actions #pause-menu-btn:hover {
+      background: rgba(255, 102, 102, 0.22);
+      box-shadow: 0 0 14px rgba(255, 102, 102, 0.35);
+    }
     body.gamepad-on #pause-overlay .hint-kb { display: none; }
     body:not(.gamepad-on) #pause-overlay .hint-gp { display: none; }
 
@@ -2046,6 +2072,10 @@
       <div class="pause-hint">
         <span class="hint-kb" data-i18n="pause_hint_kb">Echap pour reprendre</span>
         <span class="hint-gp" data-i18n="pause_hint_gp">Home pour reprendre</span>
+      </div>
+      <div class="pause-actions">
+        <button id="pause-resume-btn" type="button" data-i18n="pause_resume_btn">REPRENDRE</button>
+        <button id="pause-menu-btn"   type="button" data-i18n="pause_menu_btn">RETOUR AU MENU</button>
       </div>
     </div>
   </div>
@@ -8602,6 +8632,25 @@ const _GP_BTN_START = 9;
 const _GP_BTN_HOME = 16;
 
 let gamePaused = false;
+// Focus chain for the pause overlay — D-pad cycles, A activates.
+const _PAUSE_FOCUSABLES = ['pause-resume-btn', 'pause-menu-btn'];
+let _pauseFocusIdx = 0;
+function _pauseFocusApply() {
+  for (const id of _PAUSE_FOCUSABLES) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('gp-focus');
+  }
+  const t = document.getElementById(_PAUSE_FOCUSABLES[_pauseFocusIdx]);
+  if (t) t.classList.add('gp-focus');
+}
+function _pauseFocusMove(delta) {
+  _pauseFocusIdx = (_pauseFocusIdx + delta + _PAUSE_FOCUSABLES.length) % _PAUSE_FOCUSABLES.length;
+  _pauseFocusApply();
+}
+function _pauseFocusActivate() {
+  const t = document.getElementById(_PAUSE_FOCUSABLES[_pauseFocusIdx]);
+  if (t) t.click();
+}
 function togglePause(force) {
   // Don't allow pausing before the round actually starts.
   if (typeof gameStarted === 'undefined' || !gameStarted) return;
@@ -8610,6 +8659,7 @@ function togglePause(force) {
   gamePaused = next;
   const overlay = document.getElementById('pause-overlay');
   if (overlay) overlay.hidden = !gamePaused;
+  if (gamePaused) { _pauseFocusIdx = 0; _pauseFocusApply(); }
   // Reset lastTime so the dt spike after unpausing doesn't teleport
   // everything forward by however many seconds the pause lasted.
   if (!gamePaused) { try { lastTime = 0; } catch (e) {} }
@@ -8694,7 +8744,22 @@ function pollGamepad() {
   const pauseNow = btn(_GP_BTN_HOME) || btn(_GP_BTN_START);
   if (pauseNow && !_GP.prevPause) togglePause();
   _GP.prevPause = pauseNow;
-  if (gamePaused) return; // freeze all other input mapping while paused
+  // While paused: D-pad cycles between Resume / Menu, A activates.
+  // Don't bleed into gameplay input below.
+  if (gamePaused) {
+    const lNow = btn(_GP_BTN_DPAD_L);
+    const rNow = btn(_GP_BTN_DPAD_R);
+    const uNow = btn(_GP_BTN_DPAD_U);
+    const dNow = btn(_GP_BTN_DPAD_D);
+    const aNow = btn(_GP_BTN_A);
+    if ((lNow && !_GP.prevDpadL) || (uNow && !_GP.prevDpadU)) _pauseFocusMove(-1);
+    if ((rNow && !_GP.prevDpadR) || (dNow && !_GP.prevDpadD)) _pauseFocusMove(+1);
+    if (aNow && !_GP.prevA) _pauseFocusActivate();
+    _GP.prevDpadL = lNow; _GP.prevDpadR = rNow;
+    _GP.prevDpadU = uNow; _GP.prevDpadD = dNow;
+    _GP.prevA = aNow;
+    return;
+  }
 
   // From here on these are in-game mappings only. Skip them while
   // the menu is showing so A doesn't ghost-charge a fireball while
@@ -15193,6 +15258,18 @@ startBtn.addEventListener('click', beginGame);
 nameInput.addEventListener('keydown', (e) => { if (e.code === 'Enter') _submitConsentAndPlay(); });
 const _emailInputEl = document.getElementById('email-input');
 if (_emailInputEl) _emailInputEl.addEventListener('keydown', (e) => { if (e.code === 'Enter') _submitConsentAndPlay(); });
+
+// Pause overlay buttons: Resume unpauses, Menu reuses the existing
+// rejoin flow (clears stored email + reloads the page to the menu).
+(function _wirePauseButtons() {
+  const resumeBtn = document.getElementById('pause-resume-btn');
+  const menuBtn   = document.getElementById('pause-menu-btn');
+  if (resumeBtn) resumeBtn.addEventListener('click', () => togglePause(false));
+  if (menuBtn)   menuBtn.addEventListener('click', () => {
+    if (typeof window._rejoinSession === 'function') window._rejoinSession();
+    else location.replace(location.pathname);
+  });
+})();
 // Global fallback for onclick attribute
 window._beginGame = beginGame;
 
@@ -15936,6 +16013,8 @@ const I18N_STRINGS = {
     pause_title: 'PAUSE',
     pause_hint_kb: 'Echap pour reprendre',
     pause_hint_gp: 'Home / Start pour reprendre',
+    pause_resume_btn: 'REPRENDRE',
+    pause_menu_btn: 'RETOUR AU MENU',
     respawn_title: 'NAUFRAGE',
     exo_arrow_text: '\u2699 R\u00C9CUP\u00C8RE TES MODULES PERDUS',
     hydro_warn: '\u26A0 L\u2019HYDRONAUTE EST PROT\u00C9G\u00C9E !<br><span>Ne l\u2019attaquez pas \u2014 vous subissez les d\u00E9g\u00E2ts</span>',
@@ -16068,6 +16147,8 @@ const I18N_STRINGS = {
     pause_title: 'PAUSED',
     pause_hint_kb: 'Press Esc to resume',
     pause_hint_gp: 'Press Home / Start to resume',
+    pause_resume_btn: 'RESUME',
+    pause_menu_btn: 'BACK TO MENU',
     respawn_title: 'SHIPWRECK',
     exo_arrow_text: '\u2699 RECOVER YOUR LOST MODULES',
     hydro_warn: '\u26A0 THE HYDRONAUTE IS PROTECTED !<br><span>Do not attack her \u2014 you take the damage</span>',
