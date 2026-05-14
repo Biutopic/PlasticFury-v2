@@ -1905,7 +1905,7 @@
     <input type="text" id="name-input" placeholder="Entre ton nom..." maxlength="16" value="Capitaine" data-i18n-placeholder="name_placeholder">
 
     <div class="start-label" data-i18n="email_label">Email</div>
-    <input type="email" id="email-input" placeholder="vous@exemple.com" maxlength="120" autocomplete="email" required>
+    <input type="email" id="email-input" placeholder="vous@exemple.com" maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" required>
 
     <label id="consent-row">
       <input type="checkbox" id="consent-input" required>
@@ -15220,13 +15220,13 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => setTimeout(_flushConsentQueue, 250));
 }
 
-// Restore last-used email so returning players don't re-type it.
+// Email is intentionally NOT auto-restored from localStorage anymore.
+// Every session must explicitly type the email + tick consent —
+// otherwise a pre-filled field bypasses the gate the moment the
+// player walks up to a kiosk and clicks LARGUER LES AMARRES.
 try {
-  const saved = localStorage.getItem('ti_email');
-  if (saved) {
-    const ev = document.getElementById('email-input');
-    if (ev) ev.value = saved;
-  }
+  const ev = document.getElementById('email-input');
+  if (ev) ev.value = '';
 } catch (e) {}
 
 // (Auto-launch on ?play=1 was previously here. Removed: REJOUER now
