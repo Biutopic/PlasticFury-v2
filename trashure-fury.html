@@ -1986,7 +1986,7 @@
   <!-- Fire charge crosshair — static outer aim ring + animated progress arc
        + center tick marks. Progress arc grows with stroke-dasharray so the
        player sees a clean "charge meter" building around the reticle. -->
-  <div id="fire-crosshair" style="display:none; position:fixed; top:18%; left:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:100;">
+  <div id="fire-crosshair" style="display:none; position:fixed; top:42%; left:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:100;">
     <svg width="140" height="140" viewBox="-70 -70 140 140">
       <!-- Outer aim guide (static) -->
       <circle cx="0" cy="0" r="52" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1" stroke-dasharray="2 4"/>
@@ -8677,12 +8677,16 @@ window.addEventListener('gamepadconnected', (e) => {
   _GP.name = e.gamepad.id || 'Gamepad';
   document.body.classList.add('gamepad-on');
   console.log('[Trashure] Gamepad connected:', _GP.name);
+  // Re-apply i18n so all SHIFT/ESPACE references get rewritten to A/R2
+  // wherever they appear (fb unlock banner, controls hint, etc.).
+  try { if (typeof applyI18n === 'function') applyI18n(_currentLang); } catch (err) {}
 });
 window.addEventListener('gamepaddisconnected', (e) => {
   if (e.gamepad.index === _GP.index) {
     _GP.connected = false;
     _GP.index = -1;
     document.body.classList.remove('gamepad-on');
+    try { if (typeof applyI18n === 'function') applyI18n(_currentLang); } catch (err) {}
     console.log('[Trashure] Gamepad disconnected');
   }
 });
@@ -16251,15 +16255,31 @@ function tr(key) {
   if (fr[key] != null) return fr[key];
   return key;
 }
+// Swap keyboard key references for controller equivalents when a
+// gamepad is connected. Centralised so every i18n string passing
+// through applyI18n gets the same treatment as the tutorial overlay
+// and the tip robot.
+function _gpSwap(html) {
+  if (!document.body.classList.contains('gamepad-on')) return html;
+  return String(html)
+    .replace(/\bZQSD\b/g, 'Stick gauche')
+    .replace(/\bWASD\b/g, 'Left stick')
+    .replace(/\bESPACE\b/g, 'R2')
+    .replace(/\bEspace\b/g, 'R2')
+    .replace(/\bSPACE\b/g, 'R2')
+    .replace(/\bSpace\b/g, 'R2')
+    .replace(/\bSHIFT\b/g, 'A')
+    .replace(/\bShift\b/g, 'A');
+}
 function applyI18n(lang) {
   const dict = I18N_STRINGS[lang] || I18N_STRINGS.fr;
   document.querySelectorAll('[data-i18n]').forEach((el) => {
     const key = el.getAttribute('data-i18n');
-    if (dict[key] != null) el.innerHTML = dict[key];
+    if (dict[key] != null) el.innerHTML = _gpSwap(dict[key]);
   });
   document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
     const key = el.getAttribute('data-i18n-placeholder');
-    if (dict[key] != null) el.placeholder = dict[key].replace(/<[^>]+>/g, '');
+    if (dict[key] != null) el.placeholder = _gpSwap(dict[key]).replace(/<[^>]+>/g, '');
   });
   document.documentElement.setAttribute('lang', lang);
   _currentLang = lang;
