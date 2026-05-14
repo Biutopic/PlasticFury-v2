@@ -1717,6 +1717,32 @@
       vertical-align: middle; line-height: 1;
     }
 
+    /* ---- PAUSE OVERLAY ---- */
+    #pause-overlay {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(2,8,20,0.55);
+      backdrop-filter: blur(4px);
+      animation: pause-fade 0.18s ease-out;
+    }
+    @keyframes pause-fade { from { opacity: 0; } to { opacity: 1; } }
+    #pause-overlay .pause-card {
+      padding: 26px 44px; text-align: center;
+      border: 1px solid rgba(0,200,255,0.45);
+      box-shadow: 0 0 30px rgba(0,200,255,0.25);
+    }
+    #pause-overlay .pause-title {
+      font-family: var(--font-heading);
+      font-size: 2.4rem; font-weight: 800; letter-spacing: 0.25em;
+      color: #00d4ff; text-shadow: 0 0 18px rgba(0,200,255,0.55);
+      margin-bottom: 10px;
+    }
+    #pause-overlay .pause-hint {
+      font-size: 0.85rem; color: rgba(255,255,255,0.75); letter-spacing: 0.05em;
+    }
+    body.gamepad-on #pause-overlay .hint-kb { display: none; }
+    body:not(.gamepad-on) #pause-overlay .hint-gp { display: none; }
+
     /* ---- LOW HP WARNING ---- */
     #low-hp-warning {
       position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
@@ -1991,6 +2017,18 @@
 
   <!-- Combo display -->
   <div id="combo-display" class="glass-panel"></div>
+  <!-- Pause overlay — toggled by Home/Guide button (or Start) on the
+       controller, or Escape on keyboard. While shown, the game loop
+       skips its update step so nothing moves. -->
+  <div id="pause-overlay" hidden>
+    <div class="pause-card glass-panel">
+      <div class="pause-title" data-i18n="pause_title">PAUSE</div>
+      <div class="pause-hint">
+        <span class="hint-kb" data-i18n="pause_hint_kb">Echap pour reprendre</span>
+        <span class="hint-gp" data-i18n="pause_hint_gp">Home pour reprendre</span>
+      </div>
+    </div>
+  </div>
   <!-- REPO robot guide: 3D robot avatar + speech bubble, bottom-left -->
   <div id="repo-guide">
     <canvas id="repo-canvas"></canvas>
@@ -8417,6 +8455,14 @@ function _shouldIgnoreKeyForInput(e) {
   return false;
 }
 window.addEventListener('keydown', (e) => {
+  // Escape toggles pause (mirrors Home/Start on the controller). Check
+  // BEFORE the ignore-for-input gate so it works even when an input is
+  // focused, and BEFORE keyMap so it doesn't compete with movement.
+  if (e.code === 'Escape' && typeof gameStarted !== 'undefined' && gameStarted) {
+    togglePause();
+    e.preventDefault();
+    return;
+  }
   if (_shouldIgnoreKeyForInput(e)) return;
   const act = keyMap[e.code];
   if (act) {
@@ -8527,6 +8573,30 @@ const _GP_BTN_DPAD_U = 12;
 const _GP_BTN_DPAD_D = 13;
 const _GP_BTN_DPAD_L = 14;
 const _GP_BTN_DPAD_R = 15;
+// Start (9) and Home/Guide (16) both pause/unpause. Home is sometimes
+// captured by the OS / browser — Start is a guaranteed fallback.
+const _GP_BTN_START = 9;
+const _GP_BTN_HOME = 16;
+
+let gamePaused = false;
+function togglePause(force) {
+  // Don't allow pausing before the round actually starts.
+  if (typeof gameStarted === 'undefined' || !gameStarted) return;
+  const next = (typeof force === 'boolean') ? force : !gamePaused;
+  if (next === gamePaused) return;
+  gamePaused = next;
+  const overlay = document.getElementById('pause-overlay');
+  if (overlay) overlay.hidden = !gamePaused;
+  // Reset lastTime so the dt spike after unpausing doesn't teleport
+  // everything forward by however many seconds the pause lasted.
+  if (!gamePaused) { try { lastTime = 0; } catch (e) {} }
+  // Release any held movement input so the player doesn't fly off
+  // when paused mid-press.
+  if (gamePaused && typeof input !== 'undefined') {
+    input.forward = input.backward = input.left = input.right = false;
+    input.boost = false;
+  }
+}
 
 window.addEventListener('gamepadconnected', (e) => {
   _GP.connected = true;
@@ -8594,6 +8664,14 @@ function pollGamepad() {
   const buttons = gp.buttons;
   const btn = (i) => buttons[i] && buttons[i].pressed;
   const btnVal = (i) => (buttons[i] ? buttons[i].value : 0);
+
+  // --- Home / Start → pause toggle (edge-detected) ---
+  // Wired before any gameplay reads so a paused frame still detects the
+  // unpause press, and so the pause press doesn't also register as boost.
+  const pauseNow = btn(_GP_BTN_HOME) || btn(_GP_BTN_START);
+  if (pauseNow && !_GP.prevPause) togglePause();
+  _GP.prevPause = pauseNow;
+  if (gamePaused) return; // freeze all other input mapping while paused
 
   // --- R2 → boost (analog trigger → digital with hysteresis) ---
   const boostNow = btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH;
@@ -12372,6 +12450,9 @@ function gameLoop(timestamp) {
   // works on the start screen too.
   try { pollGamepad(); } catch (e) {}
   if (!gameStarted) return;
+  // Pause freezes simulation. We still RAF + poll the gamepad above so
+  // the unpause press is detected; we just don't advance the world.
+  if (gamePaused) { lastTime = 0; return; }
 
   const now = timestamp / 1000;
   const rawDt = Math.min(lastTime > 0 ? now - lastTime : 1 / 60, 0.1);
@@ -15795,6 +15876,9 @@ const I18N_STRINGS = {
     controls_hint: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
     controls_hint_kb: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
     controls_hint_gp: 'Stick Naviguer &middot; R2 Boost &middot; L2 Boule de feu &middot; X/Y/B Am\u00E9liorations',
+    pause_title: 'PAUSE',
+    pause_hint_kb: 'Echap pour reprendre',
+    pause_hint_gp: 'Home / Start pour reprendre',
     respawn_title: 'NAUFRAGE',
     exo_arrow_text: '\u2699 R\u00C9CUP\u00C8RE TES MODULES PERDUS',
     hydro_warn: '\u26A0 L\u2019HYDRONAUTE EST PROT\u00C9G\u00C9E !<br><span>Ne l\u2019attaquez pas \u2014 vous subissez les d\u00E9g\u00E2ts</span>',
@@ -15924,6 +16008,9 @@ const I18N_STRINGS = {
     controls_hint: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
     controls_hint_kb: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
     controls_hint_gp: 'Stick Navigate &middot; R2 Boost &middot; L2 Fireball &middot; X/Y/B Upgrades',
+    pause_title: 'PAUSED',
+    pause_hint_kb: 'Press Esc to resume',
+    pause_hint_gp: 'Press Home / Start to resume',
     respawn_title: 'SHIPWRECK',
     exo_arrow_text: '\u2699 RECOVER YOUR LOST MODULES',
     hydro_warn: '\u26A0 THE HYDRONAUTE IS PROTECTED !<br><span>Do not attack her \u2014 you take the damage</span>',
