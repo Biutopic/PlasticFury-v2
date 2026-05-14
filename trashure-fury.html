@@ -9279,8 +9279,22 @@ const TIPS = [
 ];
 // Pick the language-appropriate payload for a tip, falling back to FR.
 function _tipHtml(tip) {
-  if (_currentLang === 'en' && tip.htmlEn) return tip.htmlEn;
-  return tip.html;
+  let html = (_currentLang === 'en' && tip.htmlEn) ? tip.htmlEn : tip.html;
+  // When a gamepad (Thorium / Xbox-style) is connected, the robot speaks
+  // controller, not keyboard. Swap key references inline so the speech
+  // bubble matches the tutorial overlay.
+  if (document.body.classList.contains('gamepad-on')) {
+    html = html
+      .replace(/\bZQSD\b/g, 'Stick gauche')
+      .replace(/\bWASD\b/g, 'Left stick')
+      .replace(/\bESPACE\b/g, 'R2')
+      .replace(/\bEspace\b/g, 'R2')
+      .replace(/\bSPACE\b/g, 'R2')
+      .replace(/\bSpace\b/g, 'R2')
+      .replace(/\bSHIFT\b/g, 'L2')
+      .replace(/\bShift\b/g, 'L2');
+  }
+  return html;
 }
 
 const _seenTips = Object.create(null);
