@@ -15555,11 +15555,16 @@ function closeTutorial() {
 }
 function nextTutoStep() {
   if (_tutoIndex >= _tutorialSteps.length - 1) {
-    // Last step's "Start" button launches the game directly. Solo
-    // mode while online MP is parked — was beginGame which connected
-    // to the server even from the tutorial flow.
+    // Last step's "Start" button launches the game — but it must
+    // route through _submitConsentAndPlay so empty email / unchecked
+    // consent still block the start (used to call beginSolo()
+    // directly, which bypassed validation).
     closeTutorial();
-    if (typeof beginSolo === 'function') beginSolo();
+    if (typeof window._submitConsentAndPlay === 'function') {
+      window._submitConsentAndPlay();
+    } else if (typeof beginSolo === 'function') {
+      beginSolo();
+    }
     return;
   }
   _tutoIndex++;
