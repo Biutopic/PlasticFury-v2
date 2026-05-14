@@ -3406,35 +3406,41 @@ function updateMotorLoop(dt, engineRunning, accelerating, boosting) {
     motorLoop.playbackRate = Math.max(0.4, Math.min(2.0, _motorRate));
   } catch (e) { /* some browsers throttle playbackRate changes */ }
 
-  // Controller rumble synced to the motor. Light periodic pulses —
-  // not a continuous hum. Idle is almost imperceptible; boost is
-  // noticeable but still subtle. Crash rumbles (1.0) easily dominate
-  // these. Interval longer than duration so it reads as a tap, not
-  // a buzz; suppressed for 250ms after a hit so collision pulses
-  // aren't clobbered.
+  // Controller rumble synced to the motor. Three distinct states:
+  //   idle (engine on, not throttling) → barely-there single tap
+  //   cruise (forward)                  → very light tap
+  //   boost                             → noticeable but still subtle
+  // Skipped entirely while the engine isn't running (menu, pre-crank,
+  // post-death) so the controller is dead-silent until the boat is
+  // alive. Crash rumbles (0.6–1.0) easily dominate these taps;
+  // suppressed for 250ms after a hit so collisions aren't clobbered.
   if (typeof _GP !== 'undefined' && _GP.connected && engineRunning) {
     const _now = performance.now();
     if (_now - _lastHitRumbleAt > 250 &&
         _now >= (window._engineRumbleNextAt || 0)) {
-      // Idle ≈ 0.02, cruise ≈ 0.04, boost ≈ 0.12. Capped low on
-      // purpose — engine is a "you can feel it if you focus" cue,
-      // not a steady distraction.
-      const strong = Math.min(0.13, 0.02 + _motorVol * 0.22);
-      const weak   = strong * 0.5;
+      let strong, gap;
+      if (boosting) {
+        strong = 0.14;  // noticeable
+        gap    = 480;   // faster cadence — engine alive
+      } else if (accelerating) {
+        strong = 0.035; // very light
+        gap    = 950;
+      } else {
+        strong = 0.015; // very very light — almost imperceptible
+        gap    = 1300;
+      }
+      const weak = strong * 0.5;
       try {
         const gp = navigator.getGamepads()[_GP.index];
         if (gp && gp.vibrationActuator) {
           gp.vibrationActuator.playEffect('dual-rumble', {
             startDelay: 0,
-            duration: 110,         // short tap
+            duration: 90,          // short tap
             weakMagnitude: weak,
             strongMagnitude: strong,
           });
         }
       } catch (e) {}
-      // Long gap between taps so it stays a "light pulse", not a hum.
-      // Faster when boosting so the engine feels more alive at speed.
-      const gap = boosting ? 520 : 850;
       window._engineRumbleNextAt = _now + gap;
     }
   }
