@@ -8741,10 +8741,11 @@ function pollGamepad() {
   }
 }
 
-// Menu focus order — just the two action buttons. Email/consent
-// still need keyboard since the gamepad has no text entry. Toggling
-// the consent checkbox is the only thing A does when focused on it.
-const _MENU_FOCUSABLES = ['start-btn', 'tutorial-btn'];
+// Menu focus order — full chain so a controller-only player can reach
+// every required field. Email needs an external keyboard to type, but
+// at minimum A focuses it (kiosk setups usually have one plugged in).
+// On the checkbox A toggles consent. On a button A clicks it.
+const _MENU_FOCUSABLES = ['name-input', 'email-input', 'consent-input', 'start-btn', 'tutorial-btn'];
 let _menuFocusIdx = 0;
 function _menuFocusApply() {
   for (const id of _MENU_FOCUSABLES) {
@@ -8753,7 +8754,14 @@ function _menuFocusApply() {
     el.classList.remove('gp-focus');
   }
   const target = document.getElementById(_MENU_FOCUSABLES[_menuFocusIdx]);
-  if (target) target.classList.add('gp-focus');
+  if (!target) return;
+  target.classList.add('gp-focus');
+  // For form fields, also give them DOM focus so a USB keyboard can
+  // type into them while the controller is highlighting the row.
+  if (target.tagName === 'INPUT') {
+    try { target.focus({ preventScroll: false }); } catch (e) { try { target.focus(); } catch (_) {} }
+  }
+  try { target.scrollIntoView({ block: 'nearest' }); } catch (e) {}
 }
 function _menuFocusMove(delta) {
   _menuFocusIdx = (_menuFocusIdx + delta + _MENU_FOCUSABLES.length) % _MENU_FOCUSABLES.length;
@@ -8761,7 +8769,22 @@ function _menuFocusMove(delta) {
 }
 function _menuFocusActivate() {
   const target = document.getElementById(_MENU_FOCUSABLES[_menuFocusIdx]);
-  if (target) target.click();
+  if (!target) return;
+  // Checkbox: A toggles. Default .click() works, but explicit so it's
+  // obvious from this file what A does on each row.
+  if (target.id === 'consent-input') {
+    target.checked = !target.checked;
+    try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+    return;
+  }
+  // Text inputs: A just focuses (handled in _menuFocusApply, but
+  // refocus in case the user clicked elsewhere first).
+  if (target.tagName === 'INPUT' && target.type !== 'checkbox') {
+    try { target.focus(); } catch (e) {}
+    return;
+  }
+  // Buttons: click.
+  target.click();
 }
 // Apply the initial focus ring the first time any pad button is
 // pressed in the menu so we don't show it for keyboard-only sessions.
