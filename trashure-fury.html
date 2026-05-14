@@ -3405,6 +3405,36 @@ function updateMotorLoop(dt, engineRunning, accelerating, boosting) {
     motorLoop.volume = Math.max(0, Math.min(1, _motorVol));
     motorLoop.playbackRate = Math.max(0.4, Math.min(2.0, _motorRate));
   } catch (e) { /* some browsers throttle playbackRate changes */ }
+
+  // Controller rumble synced to the motor. Very subtle continuous
+  // background pulse so the player can FEEL the engine through their
+  // hands. Strength scales with motor volume (so idle is barely there,
+  // cruise hums faintly, boost trembles). Re-issued periodically — the
+  // Gamepad API has no continuous rumble, only timed effects. We skip
+  // the re-issue right after a hit so the hit pulse isn't clobbered.
+  if (typeof _GP !== 'undefined' && _GP.connected && engineRunning) {
+    const _now = performance.now();
+    if (_now - _lastHitRumbleAt > 250 &&
+        _now >= (window._engineRumbleNextAt || 0)) {
+      // Map _motorVol [~0.03..0.48] → strong magnitude [0.04..0.18].
+      // Capped low — this should be FELT, not announce itself.
+      const strong = Math.min(0.20, 0.03 + _motorVol * 0.40);
+      const weak   = strong * 0.55;
+      try {
+        const gp = navigator.getGamepads()[_GP.index];
+        if (gp && gp.vibrationActuator) {
+          gp.vibrationActuator.playEffect('dual-rumble', {
+            startDelay: 0,
+            duration: 320,
+            weakMagnitude: weak,
+            strongMagnitude: strong,
+          });
+        }
+      } catch (e) {}
+      // Overlap slightly so the pulses chain into a continuous hum.
+      window._engineRumbleNextAt = _now + 280;
+    }
+  }
 }
 
 // ============================================================
@@ -4314,7 +4344,8 @@ function applyCollision(a, b, now) {
     if (!_mpTrySendHit(loser, dmg, 'ram')) {
       loser.health -= dmg;
       loser.lastHitTime = now;
-      if (loser.id === 'local') triggerHitEffect();
+      // Boost-ram: heavy thump. Local boat got slammed.
+      if (loser.id === 'local') triggerHitEffect(1.0, 360);
     }
     events.push({ id: 'ce_' + (collisionIdCounter++), x: loser.x, z: loser.z, text: '-' + dmg + ' HP', color: '#ff4444', time: now, victimId: loser.id });
   } else {
@@ -4324,12 +4355,13 @@ function applyCollision(a, b, now) {
     if (!_mpTrySendHit(winner, selfDmg, 'ram')) {
       winner.health -= selfDmg;
       winner.lastHitTime = now;
-      if (winner.id === 'local') triggerHitEffect();
+      // Non-boost crash — medium bump scaled to damage taken.
+      if (winner.id === 'local') triggerHitEffect(0.75, 240);
     }
     if (!_mpTrySendHit(loser, otherDmg, 'ram')) {
       loser.health -= otherDmg;
       loser.lastHitTime = now;
-      if (loser.id === 'local') triggerHitEffect();
+      if (loser.id === 'local') triggerHitEffect(0.6, 200);
     }
     events.push({ id: 'ce_' + (collisionIdCounter++), x: winner.x, z: winner.z, text: '-' + selfDmg + ' HP', color: '#ff4444', time: now, victimId: winner.id });
     events.push({ id: 'ce_' + (collisionIdCounter++), x: loser.x, z: loser.z, text: '-' + otherDmg + ' HP', color: '#ff4444', time: now, victimId: loser.id });
@@ -10104,16 +10136,23 @@ function _typewriteTip(html) {
 })();
 
 // -- Hit effect --
-function triggerHitEffect() {
+// intensity / duration are optional; defaults give the standard hit pulse.
+// Boat-vs-boat boost rams pass a stronger pulse so the player can feel
+// the difference between a glancing scrape and a full ram.
+let _lastHitRumbleAt = 0;
+function triggerHitEffect(intensity, durationMs) {
   const v = document.getElementById('hit-vignette');
   v.classList.add('active');
   setTimeout(() => v.classList.remove('active'), 500);
   const gs = document.getElementById('game-screen');
   gs.classList.add('shaking');
   setTimeout(() => gs.classList.remove('shaking'), 300);
+  const s = (intensity  != null) ? intensity  : 0.85;
+  const d = (durationMs != null) ? durationMs : 180;
   // Controller rumble — short snap pulse on every hit. Safe no-op
   // when no gamepad is connected.
-  try { gamepadVibrate(0.85, 180); } catch (e) {}
+  try { gamepadVibrate(s, d); } catch (e) {}
+  _lastHitRumbleAt = performance.now();
 }
 
 // -- Hydronaute warning (flashing banner when player rams or attacks her) --
