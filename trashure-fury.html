@@ -3420,8 +3420,8 @@ function updateMotorLoop(dt, engineRunning, accelerating, boosting) {
         _now >= (window._engineRumbleNextAt || 0)) {
       let strong, gap;
       if (boosting) {
-        strong = 0.14;  // noticeable
-        gap    = 480;   // faster cadence — engine alive
+        strong = 0.28;  // clearly felt — the turbo bites
+        gap    = 360;   // tight cadence — engine alive
       } else if (accelerating) {
         strong = 0.035; // very light
         gap    = 950;
