@@ -907,6 +907,21 @@
     }
 
     /* ---- CONTROLS HINT ---- */
+    /* Gamepad focus ring — appears on the menu button the D-pad
+       currently points at. Just a bright outline that doesn't fight
+       the existing button hover gradient. */
+    .gp-focus {
+      outline: 3px solid #00ffdd !important;
+      outline-offset: 3px;
+      box-shadow: 0 0 24px rgba(0, 255, 220, 0.6) !important;
+    }
+    /* When a gamepad is connected, swap the keyboard controls hint
+       text for the controller one (the two spans live side by side
+       inside #controls-hint; CSS toggles which is visible). */
+    #controls-hint .hint-gp { display: none; }
+    body.gamepad-on #controls-hint .hint-kb { display: none; }
+    body.gamepad-on #controls-hint .hint-gp { display: inline; }
+
     #controls-hint {
       position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
       z-index: 20; padding: 10px 24px; font-size: 0.68rem;
@@ -1954,7 +1969,13 @@
   </div>
 
   <!-- Controls hint -->
-  <div id="controls-hint" class="glass-panel" data-i18n="controls_hint">ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; &Eacute;vitez Baleine &amp; Hydronaute !</div>
+  <!-- Two control hint variants. CSS shows .hint-kb by default; when
+       body.gamepad-on (a gamepad has been connected) it swaps to
+       .hint-gp. Each span is i18n-keyed independently. -->
+  <div id="controls-hint" class="glass-panel">
+    <span class="hint-kb" data-i18n="controls_hint_kb">ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; &Eacute;vitez Baleine &amp; Hydronaute !</span>
+    <span class="hint-gp" data-i18n="controls_hint_gp">Stick Naviguer &middot; R2 Boost &middot; L2 Boule de feu &middot; X/Y/B Am&eacute;liorations</span>
+  </div>
 
   <!-- Combo display -->
   <div id="combo-display" class="glass-panel"></div>
@@ -8443,6 +8464,233 @@ window.addEventListener('keyup', (e) => {
 });
 
 // ============================================================
+// GAMEPAD — Xbox/Thorium-style controller (Standard Mapping)
+// ============================================================
+// Layout per user spec:
+//   Left stick      → boat heading (forward/back/left/right)
+//   R2 (RT)         → boost
+//   L2 (LT)         → fire (hold to charge, release to shoot —
+//                     mirrors the Shift keyboard flow)
+//   X / Y / B       → upgrade slot 1 / 2 / 3 (X = left card, Y =
+//                     middle, B = right; tap = select + confirm)
+//   D-Pad ←→        → move between menu buttons on the start screen
+//   A               → press the focused menu button
+//   Any collision   → short rumble pulse via vibrationActuator
+//
+// Pure Gamepad API — no library. Pollled from the main gameLoop so
+// the input timing matches the keyboard path frame-for-frame.
+
+const _GP = {
+  connected: false,
+  index: -1,
+  name: '',
+  // Edge-detect state so a held trigger / button only fires its
+  // "press" action once.
+  prevBoost: false,
+  prevFire:  false,
+  prevX: false,
+  prevY: false,
+  prevB: false,
+  prevA: false,
+  prevDpadL: false,
+  prevDpadR: false,
+  prevDpadU: false,
+  prevDpadD: false,
+};
+const _GP_STICK_DEADZONE = 0.20;       // axes < this read as zero
+const _GP_TRIGGER_THRESH = 0.30;       // analog trigger considered "pressed"
+const _GP_AXIS_LX = 0;                 // standard mapping: left stick X
+const _GP_AXIS_LY = 1;                 // standard mapping: left stick Y
+// Standard Gamepad Mapping button indices we use:
+//   0 = A, 1 = B, 2 = X, 3 = Y
+//   6 = LT (L2), 7 = RT (R2)
+//   14/15/12/13 = DPad L/R/U/D
+const _GP_BTN_A = 0;
+const _GP_BTN_B = 1;
+const _GP_BTN_X = 2;
+const _GP_BTN_Y = 3;
+const _GP_BTN_L2 = 6;
+const _GP_BTN_R2 = 7;
+const _GP_BTN_DPAD_U = 12;
+const _GP_BTN_DPAD_D = 13;
+const _GP_BTN_DPAD_L = 14;
+const _GP_BTN_DPAD_R = 15;
+
+window.addEventListener('gamepadconnected', (e) => {
+  _GP.connected = true;
+  _GP.index = e.gamepad.index;
+  _GP.name = e.gamepad.id || 'Gamepad';
+  document.body.classList.add('gamepad-on');
+  console.log('[Trashure] Gamepad connected:', _GP.name);
+});
+window.addEventListener('gamepaddisconnected', (e) => {
+  if (e.gamepad.index === _GP.index) {
+    _GP.connected = false;
+    _GP.index = -1;
+    document.body.classList.remove('gamepad-on');
+    console.log('[Trashure] Gamepad disconnected');
+  }
+});
+
+// Short rumble pulse — safe to call when no controller is attached.
+// Strength 0..1, duration in ms. Multiple calls during the same
+// frame collapse to the strongest one (the actuator already throttles).
+function gamepadVibrate(strength, durationMs) {
+  if (!_GP.connected) return;
+  try {
+    const gp = navigator.getGamepads()[_GP.index];
+    if (!gp || !gp.vibrationActuator) return;
+    const s = Math.max(0, Math.min(1, strength || 0.5));
+    const d = Math.max(0, Math.min(2000, durationMs || 180));
+    gp.vibrationActuator.playEffect('dual-rumble', {
+      startDelay: 0,
+      duration: d,
+      weakMagnitude: s * 0.7,
+      strongMagnitude: s,
+    });
+  } catch (e) {}
+}
+
+// Polled once per game-loop frame. Reads the controller state and
+// mutates the same `input` object the keyboard touches, plus runs
+// fire-charge / upgrade-select / D-pad flows that the keyboard
+// handles in its keydown events.
+function pollGamepad() {
+  if (!_GP.connected) return;
+  const gp = navigator.getGamepads()[_GP.index];
+  if (!gp) return;
+
+  // --- Left stick → movement ---
+  // Stick Y is inverted in the Standard Mapping (up = -1, down = +1).
+  // Apply a radial deadzone so a slightly-off-center stick at rest
+  // doesn't ghost-drive the boat.
+  const lx = gp.axes[_GP_AXIS_LX] || 0;
+  const ly = gp.axes[_GP_AXIS_LY] || 0;
+  const mag = Math.sqrt(lx * lx + ly * ly);
+  if (mag < _GP_STICK_DEADZONE) {
+    input.forward = false;
+    input.backward = false;
+    input.left = false;
+    input.right = false;
+  } else {
+    input.forward  = ly < -_GP_STICK_DEADZONE * 0.7;
+    input.backward = ly >  _GP_STICK_DEADZONE * 0.7;
+    input.left     = lx < -_GP_STICK_DEADZONE * 0.7;
+    input.right    = lx >  _GP_STICK_DEADZONE * 0.7;
+  }
+
+  const buttons = gp.buttons;
+  const btn = (i) => buttons[i] && buttons[i].pressed;
+  const btnVal = (i) => (buttons[i] ? buttons[i].value : 0);
+
+  // --- R2 → boost (analog trigger → digital with hysteresis) ---
+  const boostNow = btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH;
+  const wasBoost = input.boost;
+  input.boost = boostNow;
+  if (boostNow && !wasBoost && localPlayer && localPlayer.boostEnergy > 0.05) {
+    try { sfx.boost(); } catch (e) {}
+  }
+  _GP.prevBoost = boostNow;
+
+  // --- L2 → fire-charge (hold to charge, release to shoot) ---
+  // Mirrors the Shift keydown / keyup flow exactly.
+  const fireNow = btnVal(_GP_BTN_L2) > _GP_TRIGGER_THRESH;
+  if (fireNow && !_GP.prevFire && !fireCharging) {
+    if (localPlayer && localPlayer.totalCollected >= FIREBALL_UNLOCK_COST) {
+      fireCharging = true;
+      fireChargeStart = performance.now() / 1000;
+      input.fire = true;
+      try { sfx.fireCharge(); } catch (e) {}
+    } else if (localPlayer) {
+      spawnFloatingText(localPlayer.x, localPlayer.z,
+        tr('float_fireball_prefix') + ' ' + localPlayer.totalCollected + '/' + FIREBALL_UNLOCK_COST,
+        '#888899');
+    }
+  } else if (!fireNow && _GP.prevFire && fireCharging) {
+    const chargeTime = performance.now() / 1000 - fireChargeStart;
+    if (chargeTime >= FIRE_MIN_CHARGE) tryShootFireball(chargeTime, true);
+    fireCharging = false;
+    fireChargeStart = 0;
+    fireEnergyDrained = 0;
+    input.fire = false;
+  }
+  _GP.prevFire = fireNow;
+
+  // --- X / Y / B → upgrade slot 1 / 2 / 3 + confirm ---
+  // Tap = select that card AND confirm in one press (no separate A
+  // confirm). Edge-detect so a held button doesn't repeat-fire.
+  if (typeof upgradeActive !== 'undefined' && upgradeActive) {
+    const xNow = btn(_GP_BTN_X);
+    const yNow = btn(_GP_BTN_Y);
+    const bNow = btn(_GP_BTN_B);
+    if (xNow && !_GP.prevX) { upgradeSelection = 0; if (typeof refreshUpgradeCards === 'function') refreshUpgradeCards(); if (typeof confirmUpgrade === 'function') confirmUpgrade(); }
+    else if (yNow && !_GP.prevY) { upgradeSelection = 1; if (typeof refreshUpgradeCards === 'function') refreshUpgradeCards(); if (typeof confirmUpgrade === 'function') confirmUpgrade(); }
+    else if (bNow && !_GP.prevB) { upgradeSelection = 2; if (typeof refreshUpgradeCards === 'function') refreshUpgradeCards(); if (typeof confirmUpgrade === 'function') confirmUpgrade(); }
+    _GP.prevX = xNow; _GP.prevY = yNow; _GP.prevB = bNow;
+  }
+
+  // --- D-pad on the menu ---
+  // When the start screen is showing, D-pad ← / → cycle focus across
+  // the menu buttons; A confirms (clicks the focused button).
+  const startScreenVisible = (() => {
+    const ss = document.getElementById('start-screen');
+    return ss && !ss.hidden;
+  })();
+  if (startScreenVisible) {
+    const lNow = btn(_GP_BTN_DPAD_L);
+    const rNow = btn(_GP_BTN_DPAD_R);
+    const uNow = btn(_GP_BTN_DPAD_U);
+    const dNow = btn(_GP_BTN_DPAD_D);
+    const aNow = btn(_GP_BTN_A);
+    if ((lNow && !_GP.prevDpadL) || (uNow && !_GP.prevDpadU)) _menuFocusMove(-1);
+    if ((rNow && !_GP.prevDpadR) || (dNow && !_GP.prevDpadD)) _menuFocusMove(+1);
+    if (aNow && !_GP.prevA) _menuFocusActivate();
+    _GP.prevDpadL = lNow; _GP.prevDpadR = rNow;
+    _GP.prevDpadU = uNow; _GP.prevDpadD = dNow;
+    _GP.prevA = aNow;
+  }
+}
+
+// Menu focus order — just the two action buttons. Email/consent
+// still need keyboard since the gamepad has no text entry. Toggling
+// the consent checkbox is the only thing A does when focused on it.
+const _MENU_FOCUSABLES = ['start-btn', 'tutorial-btn'];
+let _menuFocusIdx = 0;
+function _menuFocusApply() {
+  for (const id of _MENU_FOCUSABLES) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.classList.remove('gp-focus');
+  }
+  const target = document.getElementById(_MENU_FOCUSABLES[_menuFocusIdx]);
+  if (target) target.classList.add('gp-focus');
+}
+function _menuFocusMove(delta) {
+  _menuFocusIdx = (_menuFocusIdx + delta + _MENU_FOCUSABLES.length) % _MENU_FOCUSABLES.length;
+  _menuFocusApply();
+}
+function _menuFocusActivate() {
+  const target = document.getElementById(_MENU_FOCUSABLES[_menuFocusIdx]);
+  if (target) target.click();
+}
+// Apply the initial focus ring the first time any pad button is
+// pressed in the menu so we don't show it for keyboard-only sessions.
+window.addEventListener('gamepadconnected', () => { _menuFocusApply(); });
+
+// Dedicated rAF loop that polls the gamepad even before the main
+// gameLoop is running (which only starts after _beginLocalRound).
+// Without this the menu D-pad nav doesn't work because gameLoop
+// hasn't fired yet. Cheap — pollGamepad is essentially a no-op when
+// no controller is connected.
+(function _gamepadIdleLoop() {
+  requestAnimationFrame(_gamepadIdleLoop);
+  // Skip while the main gameLoop is running so we don't double-poll
+  // (gameLoop already calls pollGamepad each frame).
+  if (typeof gameStarted !== 'undefined' && gameStarted) return;
+  try { pollGamepad(); } catch (e) {}
+})();
+
+// ============================================================
 // 12. UI MANAGEMENT — HUD, leaderboard, timer, combo, overlays
 // ============================================================
 const hudNameEl    = document.getElementById('hud-name');
@@ -9603,6 +9851,9 @@ function triggerHitEffect() {
   const gs = document.getElementById('game-screen');
   gs.classList.add('shaking');
   setTimeout(() => gs.classList.remove('shaking'), 300);
+  // Controller rumble — short snap pulse on every hit. Safe no-op
+  // when no gamepad is connected.
+  try { gamepadVibrate(0.85, 180); } catch (e) {}
 }
 
 // -- Hydronaute warning (flashing banner when player rams or attacks her) --
@@ -12080,6 +12331,9 @@ function _tickFps(timestamp) {
 function gameLoop(timestamp) {
   requestAnimationFrame(gameLoop);
   _tickFps(timestamp);
+  // Pad polled BEFORE the gameStarted gate so menu D-pad navigation
+  // works on the start screen too.
+  try { pollGamepad(); } catch (e) {}
   if (!gameStarted) return;
 
   const now = timestamp / 1000;
@@ -14899,13 +15153,41 @@ function _renderTutoStep() {
   // _currentLang defined later in this same script.
   let lang = 'fr';
   try { if (localStorage.getItem('tf_lang') === 'en') lang = 'en'; } catch (e) {}
+  // Gamepad-aware text substitution. When a controller is connected,
+  // swap mentions of the keyboard controls (ZQSD/WASD, Espace/Space,
+  // SHIFT) for the controller equivalents in both the body copy and
+  // the on-card "keys" badges. Keeps a single source of truth in
+  // _tutorialSteps without forking the step list.
+  const gpOn = document.body.classList.contains('gamepad-on');
+  const _sub = (s) => {
+    if (!s || !gpOn) return s;
+    return s
+      .replace(/\bZQSD\b/g, 'Stick gauche')
+      .replace(/\bWASD\b/g, 'Left stick')
+      .replace(/\bEspace\b/g, 'R2')
+      .replace(/\bSpace\b/g, 'R2')
+      .replace(/\bSHIFT\b/g, 'L2');
+  };
+  const _subKey = (k) => {
+    if (!gpOn) return k;
+    if (k === 'Z' || k === 'Q' || k === 'S' || k === 'D' ||
+        k === 'W' || k === 'A')                       return 'STICK';
+    if (k === 'ESPACE' || k === 'SPACE')              return 'R2';
+    if (k === 'SHIFT')                                return 'L2';
+    return k;
+  };
   _tutoEls.emoji.textContent = step.emoji;
   _tutoEls.title.textContent = (lang === 'en' ? step.titleEn : step.titleFr) || '';
-  _tutoEls.body.innerHTML    = (lang === 'en' ? step.bodyEn  : step.bodyFr)  || '';
-  // Keys row
+  _tutoEls.body.innerHTML    = _sub((lang === 'en' ? step.bodyEn : step.bodyFr) || '');
+  // Keys row — collapse duplicates after gamepad substitution so we
+  // don't render "STICK STICK STICK STICK" for ZQSD.
   _tutoEls.keys.innerHTML = '';
   if (step.keys && step.keys.length) {
-    for (const k of step.keys) {
+    const seen = new Set();
+    for (const k0 of step.keys) {
+      const k = _subKey(k0);
+      if (seen.has(k)) continue;
+      seen.add(k);
       const el = document.createElement('span');
       el.className = 'tuto-key';
       el.textContent = k;
@@ -15474,6 +15756,8 @@ const I18N_STRINGS = {
     fb_unlock_title: '\uD83D\uDD25 BOULE DE FEU D\u00C9BLOQU\u00C9E !',
     fb_unlock_sub: 'Appuie sur <b>SHIFT</b> pour tirer sur les pirates',
     controls_hint: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
+    controls_hint_kb: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
+    controls_hint_gp: 'Stick Naviguer &middot; R2 Boost &middot; L2 Boule de feu &middot; X/Y/B Am\u00E9liorations',
     respawn_title: 'NAUFRAGE',
     exo_arrow_text: '\u2699 R\u00C9CUP\u00C8RE TES MODULES PERDUS',
     hydro_warn: '\u26A0 L\u2019HYDRONAUTE EST PROT\u00C9G\u00C9E !<br><span>Ne l\u2019attaquez pas \u2014 vous subissez les d\u00E9g\u00E2ts</span>',
@@ -15601,6 +15885,8 @@ const I18N_STRINGS = {
     fb_unlock_title: '\uD83D\uDD25 FIREBALL UNLOCKED !',
     fb_unlock_sub: 'Press <b>SHIFT</b> to shoot pirates',
     controls_hint: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
+    controls_hint_kb: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
+    controls_hint_gp: 'Stick Navigate &middot; R2 Boost &middot; L2 Fireball &middot; X/Y/B Upgrades',
     respawn_title: 'SHIPWRECK',
     exo_arrow_text: '\u2699 RECOVER YOUR LOST MODULES',
     hydro_warn: '\u26A0 THE HYDRONAUTE IS PROTECTED !<br><span>Do not attack her \u2014 you take the damage</span>',
