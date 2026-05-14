@@ -14538,34 +14538,114 @@ async function _submitConsentAndPlay() {
   }
   _showStartError('');
   if (startBtn) { startBtn.disabled = true; startBtn.style.opacity = '0.6'; }
-  try {
-    const res = await fetch(_CONSENT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email,
-        consent: true,
-        name: (nameInput && nameInput.value || '').trim().slice(0, 16),
-        lang: (typeof I18N_LANG !== 'undefined' ? I18N_LANG : 'fr'),
-        at: Date.now(),
-        ua: (navigator.userAgent || '').slice(0, 180),
-      }),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    // Persist locally so a returning player doesn't have to re-fill
-    // the form every visit. Server still records each submission for
-    // research-data auditing.
-    try { localStorage.setItem('ti_email', email); } catch (e) {}
-    try { localStorage.setItem('ti_consent_at', String(Date.now())); } catch (e) {}
-    if (startBtn) { startBtn.disabled = false; startBtn.style.opacity = ''; }
-    beginSolo();
-  } catch (e) {
-    if (startBtn) { startBtn.disabled = false; startBtn.style.opacity = ''; }
-    _showStartError(tr('consent_err_network'));
-    console.warn('[Trashure] consent POST failed', e);
-  }
+
+  // Build the record once; we either POST it now OR queue it for the
+  // next online retry. Either way the game starts immediately —
+  // offline / kiosk / no-internet should never block gameplay.
+  const record = {
+    email,
+    consent: true,
+    name: (nameInput && nameInput.value || '').trim().slice(0, 16),
+    lang: (typeof I18N_LANG !== 'undefined' ? I18N_LANG : 'fr'),
+    at: Date.now(),
+    ua: (navigator.userAgent || '').slice(0, 180),
+  };
+  // Persist locally regardless of server reachability — returning
+  // players don't re-type and we can flush queued records the next
+  // time the page is online.
+  try { localStorage.setItem('ti_email', email); } catch (e) {}
+  try { localStorage.setItem('ti_consent_at', String(Date.now())); } catch (e) {}
+
+  // Fire-and-forget the POST. Game starts immediately; if the network
+  // is down we just enqueue the record.
+  _postConsentOrQueue(record);
+  if (startBtn) { startBtn.disabled = false; startBtn.style.opacity = ''; }
+  beginSolo();
 }
 window._submitConsentAndPlay = _submitConsentAndPlay;
+
+// Post a consent record to the server. On any failure (network,
+// CORS, 5xx, offline) push it into a localStorage queue and try
+// again later. Always non-blocking.
+function _postConsentOrQueue(record) {
+  // Skip the POST entirely when there's no network at all — saves
+  // the failed-fetch warning in console for offline kiosks.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    _queueConsent(record);
+    return;
+  }
+  fetch(_CONSENT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(record),
+    keepalive: true, // survive page unload (browser background-sends)
+  }).then(res => {
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // Success — nothing more to do.
+  }).catch(e => {
+    console.warn('[Trashure] consent POST failed — queued for retry', e);
+    _queueConsent(record);
+  });
+}
+
+function _queueConsent(record) {
+  try {
+    const raw = localStorage.getItem('ti_consent_queue') || '[]';
+    const arr = JSON.parse(raw);
+    arr.push(record);
+    // Cap the queue at 50 entries so a player who stays offline for
+    // weeks doesn't fill localStorage.
+    while (arr.length > 50) arr.shift();
+    localStorage.setItem('ti_consent_queue', JSON.stringify(arr));
+  } catch (e) { /* localStorage may be full or disabled */ }
+}
+
+// On page load, try to flush any consent records queued from
+// previous offline sessions. Best-effort: failures stay in the
+// queue for the next attempt.
+function _flushConsentQueue() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  let arr;
+  try {
+    const raw = localStorage.getItem('ti_consent_queue');
+    if (!raw) return;
+    arr = JSON.parse(raw);
+  } catch (e) { return; }
+  if (!Array.isArray(arr) || arr.length === 0) return;
+  console.log('[Trashure] flushing', arr.length, 'queued consent record(s)');
+  // Send one at a time, popping the queue as each succeeds. Keep a
+  // local copy so a mid-flush failure doesn't lose anything.
+  const remaining = arr.slice();
+  const drain = () => {
+    if (remaining.length === 0) {
+      try { localStorage.removeItem('ti_consent_queue'); } catch (e) {}
+      return;
+    }
+    const next = remaining[0];
+    fetch(_CONSENT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next),
+    }).then(res => {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      remaining.shift();
+      try { localStorage.setItem('ti_consent_queue', JSON.stringify(remaining)); } catch (e) {}
+      drain();
+    }).catch(() => {
+      // Leave the rest in the queue. We'll try again next page load
+      // or when the player comes back online.
+    });
+  };
+  drain();
+}
+// Run the flush once the page is fully loaded. Also try again on
+// 'online' events for sessions kept open through a network blip.
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'complete') setTimeout(_flushConsentQueue, 250);
+  else window.addEventListener('load', () => setTimeout(_flushConsentQueue, 250), { once: true });
+  window.addEventListener('online', () => setTimeout(_flushConsentQueue, 250));
+}
+
 // Restore last-used email so returning players don't re-type it.
 try {
   const saved = localStorage.getItem('ti_email');
