@@ -8774,9 +8774,10 @@ function pollGamepad() {
   const inMenu = (typeof gameStarted === 'undefined' || !gameStarted);
 
   // --- A → throttle (hold to go forward) ---
-  // Stick-up still works in parallel, but A lets the player cruise
-  // hands-free on the stick. Stick-down is the only reverse input.
-  if (!inMenu && btn(_GP_BTN_A)) input.forward = true;
+  // Stick-up still works in parallel. If the player is actively
+  // reversing (stick pushed down), reverse wins — A is ignored so a
+  // held throttle doesn't fight an explicit reverse command.
+  if (!inMenu && btn(_GP_BTN_A) && !input.backward) input.forward = true;
 
   // --- R2 → boost ---
   const boostNow = !inMenu && btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH;
