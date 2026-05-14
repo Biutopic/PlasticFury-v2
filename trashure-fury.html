@@ -1476,6 +1476,26 @@
       box-shadow: 0 8px 24px rgba(0,200,200,0.2);
     }
     .upgrade-card.selected { background: rgba(0,200,200,0.08); }
+    /* Controller button badge on each upgrade card. Shows X / Y / B
+       so the player knows which pad button picks which exo module.
+       Visible only when a gamepad is connected — keyboard users get
+       the 1/2/3 hint at the bottom instead. */
+    .upgrade-card { position: relative; }
+    .upgrade-btn-badge {
+      position: absolute; top: -10px; right: -10px;
+      width: 30px; height: 30px; border-radius: 50%;
+      display: none; align-items: center; justify-content: center;
+      font-family: var(--font-heading); font-weight: 800; font-size: 0.95rem;
+      color: #0a1622;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.45), inset 0 -2px 3px rgba(0,0,0,0.25);
+      border: 2px solid rgba(255,255,255,0.85);
+      pointer-events: none;
+    }
+    body.gamepad-on .upgrade-btn-badge { display: inline-flex; }
+    /* Xbox / Thorium official colors: X blue, Y yellow, B red. */
+    .upgrade-card[data-upgrade="solar_panel"] .upgrade-btn-badge { background: #2c8eff; color: #fff; }
+    .upgrade-card[data-upgrade="speed"]       .upgrade-btn-badge { background: #ffd23f; color: #2b1f00; }
+    .upgrade-card[data-upgrade="magnet"]      .upgrade-btn-badge { background: #ff4d4d; color: #fff; }
     .upgrade-emoji { font-size: 2.5rem; margin-bottom: 12px; }
     .upgrade-name {
       font-family: var(--font-heading); font-size: 0.75rem;
@@ -2012,7 +2032,7 @@
        .hint-gp. Each span is i18n-keyed independently. -->
   <div id="controls-hint" class="glass-panel">
     <span class="hint-kb" data-i18n="controls_hint_kb">ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; &Eacute;vitez Baleine &amp; Hydronaute !</span>
-    <span class="hint-gp" data-i18n="controls_hint_gp">Stick Naviguer &middot; R2 Boost &middot; L2 Boule de feu &middot; X/Y/B Am&eacute;liorations</span>
+    <span class="hint-gp" data-i18n="controls_hint_gp">Stick Naviguer &middot; R2 Boost &middot; A Boule de feu &middot; X/Y/B Am&eacute;liorations</span>
   </div>
 
   <!-- Combo display -->
@@ -2059,16 +2079,19 @@
     <div class="upgrade-subtitle" data-i18n="upg_subtitle">Choisis une am&eacute;lioration</div>
     <div class="upgrade-cards" id="upgrade-cards">
       <div class="upgrade-card" data-upgrade="solar_panel">
+        <div class="upgrade-btn-badge">X</div>
         <div class="upgrade-emoji">&#9728;&#65039;</div>
         <div class="upgrade-name" data-i18n="upg_solar_name">Panneau Solaire</div>
         <div class="upgrade-desc" data-i18n="upg_solar_desc">Le turbo dure plus longtemps</div>
       </div>
       <div class="upgrade-card" data-upgrade="speed">
+        <div class="upgrade-btn-badge">Y</div>
         <div class="upgrade-emoji">&#9889;</div>
         <div class="upgrade-name" data-i18n="upg_speed_name">Vitesse</div>
         <div class="upgrade-desc" data-i18n="upg_speed_desc">+10 vitesse</div>
       </div>
       <div class="upgrade-card" data-upgrade="magnet">
+        <div class="upgrade-btn-badge">B</div>
         <div class="upgrade-emoji">&#129522;</div>
         <div class="upgrade-name" data-i18n="upg_magnet_name">Aimant</div>
         <div class="upgrade-desc" data-i18n="upg_magnet_desc">Attire le plastique vers toi</div>
@@ -8673,8 +8696,13 @@ function pollGamepad() {
   _GP.prevPause = pauseNow;
   if (gamePaused) return; // freeze all other input mapping while paused
 
+  // From here on these are in-game mappings only. Skip them while
+  // the menu is showing so A doesn't ghost-charge a fireball while
+  // the player is using A to confirm a menu button.
+  const inMenu = (typeof gameStarted === 'undefined' || !gameStarted);
+
   // --- R2 → boost (analog trigger → digital with hysteresis) ---
-  const boostNow = btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH;
+  const boostNow = !inMenu && btnVal(_GP_BTN_R2) > _GP_TRIGGER_THRESH;
   const wasBoost = input.boost;
   input.boost = boostNow;
   if (boostNow && !wasBoost && localPlayer && localPlayer.boostEnergy > 0.05) {
@@ -8682,9 +8710,11 @@ function pollGamepad() {
   }
   _GP.prevBoost = boostNow;
 
-  // --- L2 → fire-charge (hold to charge, release to shoot) ---
-  // Mirrors the Shift keydown / keyup flow exactly.
-  const fireNow = btnVal(_GP_BTN_L2) > _GP_TRIGGER_THRESH;
+  // --- A → fire-charge (hold to charge, release to shoot) ---
+  // Mirrors the Shift keydown / keyup flow exactly. A used to be a
+  // menu-confirm and L2 was fire; flipped so the digital A is the
+  // primary action button in-game and L2 is free.
+  const fireNow = !inMenu && btn(_GP_BTN_A);
   if (fireNow && !_GP.prevFire && !fireCharging) {
     if (localPlayer && localPlayer.totalCollected >= FIREBALL_UNLOCK_COST) {
       fireCharging = true;
@@ -9415,8 +9445,8 @@ function _tipHtml(tip) {
       .replace(/\bEspace\b/g, 'R2')
       .replace(/\bSPACE\b/g, 'R2')
       .replace(/\bSpace\b/g, 'R2')
-      .replace(/\bSHIFT\b/g, 'L2')
-      .replace(/\bShift\b/g, 'L2');
+      .replace(/\bSHIFT\b/g, 'A')
+      .replace(/\bShift\b/g, 'A');
   }
   return html;
 }
@@ -15307,14 +15337,14 @@ function _renderTutoStep() {
       .replace(/\bWASD\b/g, 'Left stick')
       .replace(/\bEspace\b/g, 'R2')
       .replace(/\bSpace\b/g, 'R2')
-      .replace(/\bSHIFT\b/g, 'L2');
+      .replace(/\bSHIFT\b/g, 'A');
   };
   const _subKey = (k) => {
     if (!gpOn) return k;
     if (k === 'Z' || k === 'Q' || k === 'S' || k === 'D' ||
         k === 'W' || k === 'A')                       return 'STICK';
     if (k === 'ESPACE' || k === 'SPACE')              return 'R2';
-    if (k === 'SHIFT')                                return 'L2';
+    if (k === 'SHIFT')                                return 'A';
     return k;
   };
   _tutoEls.emoji.textContent = step.emoji;
@@ -15898,7 +15928,7 @@ const I18N_STRINGS = {
     fb_unlock_sub: 'Appuie sur <b>SHIFT</b> pour tirer sur les pirates',
     controls_hint: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
     controls_hint_kb: 'ZQSD Naviguer &middot; Espace Boost &middot; Shift Boule de feu &middot; \u00C9vitez Baleine &amp; Hydronaute !',
-    controls_hint_gp: 'Stick Naviguer &middot; R2 Boost &middot; L2 Boule de feu &middot; X/Y/B Am\u00E9liorations',
+    controls_hint_gp: 'Stick Naviguer &middot; R2 Boost &middot; A Boule de feu &middot; X/Y/B Am\u00E9liorations',
     pause_title: 'PAUSE',
     pause_hint_kb: 'Echap pour reprendre',
     pause_hint_gp: 'Home / Start pour reprendre',
@@ -16030,7 +16060,7 @@ const I18N_STRINGS = {
     fb_unlock_sub: 'Press <b>SHIFT</b> to shoot pirates',
     controls_hint: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
     controls_hint_kb: 'WASD Navigate &middot; Space Boost &middot; Shift Fireball &middot; Avoid the Whale &amp; Hydronaute !',
-    controls_hint_gp: 'Stick Navigate &middot; R2 Boost &middot; L2 Fireball &middot; X/Y/B Upgrades',
+    controls_hint_gp: 'Stick Navigate &middot; R2 Boost &middot; A Fireball &middot; X/Y/B Upgrades',
     pause_title: 'PAUSED',
     pause_hint_kb: 'Press Esc to resume',
     pause_hint_gp: 'Press Home / Start to resume',
