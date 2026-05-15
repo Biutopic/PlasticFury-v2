@@ -687,11 +687,72 @@ export default class TrashureRoom implements Party.Server {
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
     }
+    // GET ?action=top → return the global top-N leaderboard (used by
+    // the in-game leaderboard panel and the game-over screen).
+    if (req.method === "GET") {
+      const url = new URL(req.url);
+      if (url.searchParams.get("action") === "top") {
+        const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") || 10)));
+        try {
+          // @ts-ignore — runtime storage
+          const all = await (this.room as any).storage.list({ prefix: "score:" });
+          const rows: Array<{ name: string; score: number; at: number }> = [];
+          for (const v of (all as Map<string, any>).values()) {
+            if (v && typeof v.score === "number" && typeof v.name === "string") {
+              rows.push({ name: v.name, score: v.score, at: v.at || 0 });
+            }
+          }
+          rows.sort((a, b) => b.score - a.score || a.at - b.at);
+          return new Response(JSON.stringify({ ok: true, rows: rows.slice(0, limit) }), {
+            status: 200, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ ok: false, err: "storage" }), {
+            status: 500, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
     if (req.method === "POST") {
       let body: any = {};
       try { body = await req.json(); } catch {
         return new Response(JSON.stringify({ ok: false, err: "bad_json" }), {
           status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      // Leaderboard score submission. Body: { kind: "score", name,
+      // score, email? }. Stored separately from consent records under
+      // a "score:" prefix so listing the leaderboard is one storage
+      // scan, not a filtered consent-record scan.
+      if (body.kind === "score") {
+        const name = String(body.name || "").trim().slice(0, 32);
+        const score = Math.max(0, Math.min(99999, Number(body.score) | 0));
+        if (!name || !Number.isFinite(score)) {
+          return new Response(JSON.stringify({ ok: false, err: "bad_score" }), {
+            status: 400, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+        const now = Date.now();
+        const rec = {
+          name,
+          score,
+          email: String(body.email || "").toLowerCase().slice(0, 200),
+          at: now,
+        };
+        // High score wins: sortable key by score desc then time asc.
+        const key = "score:" + (99999 - score).toString().padStart(5, "0")
+                  + ":" + now.toString(36).padStart(10, "0")
+                  + ":" + Math.random().toString(36).slice(2, 6);
+        try {
+          // @ts-ignore — runtime storage
+          await (this.room as any).storage.put(key, rec);
+        } catch (e) {
+          return new Response(JSON.stringify({ ok: false, err: "storage" }), {
+            status: 500, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200, headers: { ...cors, "Content-Type": "application/json" },
         });
       }
       const email = String(body.email || "").trim().toLowerCase();

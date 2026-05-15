@@ -1737,6 +1737,48 @@
       vertical-align: middle; line-height: 1;
     }
 
+    /* ---- GLOBAL LEADERBOARD ON MENU ---- */
+    #global-lb-panel {
+      margin-top: 18px; padding: 12px 14px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(0, 200, 255, 0.28);
+      border-radius: 10px;
+      max-height: 220px; overflow-y: auto;
+    }
+    .global-lb-title {
+      font-family: var(--font-heading); font-size: 0.72rem;
+      letter-spacing: 0.18em; color: #00d4ff;
+      text-align: center; margin-bottom: 8px;
+    }
+    #global-lb-list {
+      list-style: none; padding: 0; margin: 0;
+      font-size: 0.78rem;
+    }
+    #global-lb-list li {
+      display: flex; justify-content: space-between;
+      padding: 4px 6px; border-radius: 5px;
+      color: rgba(220, 240, 255, 0.92);
+    }
+    #global-lb-list li:nth-child(odd) { background: rgba(0, 200, 255, 0.05); }
+    #global-lb-list li .lb-rank {
+      width: 22px; color: rgba(120, 200, 230, 0.7);
+      font-family: var(--font-heading); font-weight: 700;
+    }
+    #global-lb-list li .lb-name {
+      flex: 1; margin: 0 8px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #global-lb-list li .lb-score {
+      font-family: var(--font-heading); color: #ffd23f; font-weight: 700;
+    }
+    #global-lb-list li:nth-child(1) .lb-rank { color: #ffd23f; }
+    #global-lb-list li:nth-child(2) .lb-rank { color: #d8e6ff; }
+    #global-lb-list li:nth-child(3) .lb-rank { color: #ffae62; }
+    #global-lb-list .global-lb-empty {
+      text-align: center; color: rgba(180, 200, 220, 0.55);
+      font-style: italic; justify-content: center;
+    }
+
     /* ---- PAUSE OVERLAY ---- */
     #pause-overlay {
       position: fixed; inset: 0; z-index: 50;
@@ -1923,6 +1965,15 @@
       <button id="tutorial-btn" onclick="if(window._openTutorial)window._openTutorial()" data-i18n="tuto_btn">TUTORIEL</button>
     </div>
     <div id="start-coming-soon" data-i18n="start_coming_soon">Multijoueur (en ligne et &eacute;cran partag&eacute;) : bient&ocirc;t disponible</div>
+
+    <!-- Global leaderboard. Populated on menu open from the PartyKit
+         server. Top 10 best plastic counts of all time. -->
+    <div id="global-lb-panel">
+      <div class="global-lb-title" data-i18n="lb_title">&#127942; MEILLEURS CAPITAINES</div>
+      <ol id="global-lb-list">
+        <li class="global-lb-empty" data-i18n="lb_loading">Chargement&hellip;</li>
+      </ol>
+    </div>
   </div>
 </div>
 
@@ -10791,6 +10842,17 @@ function showGameOver() {
       goBtn.focus();
     }
   } catch (e) {}
+  // Submit the final score to the global leaderboard. Fire-and-forget;
+  // failure is invisible to the player. Only submits real local plays
+  // (skipped for spectator / no-name edge cases).
+  try {
+    const finalName  = String(localPlayer.name || '').trim().slice(0, 32);
+    const finalScore = (localPlayer.totalCollected | 0);
+    const storedEmail = String(window._lastSessionEmail || '');
+    if (finalName && finalScore > 0) {
+      _submitScore(finalName, finalScore, storedEmail);
+    }
+  } catch (e) {}
 }
 
 // Legacy "REJOUER" button — now calls the soft rejoin (new server
@@ -15083,6 +15145,51 @@ const _CONSENT_URL = (() => {
   const host = 'trashure-island.basiloco.partykit.dev';
   return 'https://' + host + '/parties/main/consents';
 })();
+// ---- Global leaderboard ----
+// Fetches top scores from PartyKit (shared with the consents room)
+// and posts the local player's final score on game-over.
+function _fetchLeaderboard() {
+  return fetch(_CONSENT_URL + '?action=top&limit=10', {
+    method: 'GET',
+    cache: 'no-store',
+  }).then(r => r.ok ? r.json() : null).catch(() => null);
+}
+function _submitScore(name, score, email) {
+  try {
+    fetch(_CONSENT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'score', name, score, email: email || '' }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (e) {}
+}
+function _renderLeaderboard(rows) {
+  const ul = document.getElementById('global-lb-list');
+  if (!ul) return;
+  if (!rows || !rows.length) {
+    ul.innerHTML = '<li class="global-lb-empty">' + (tr('lb_empty') || '—') + '</li>';
+    return;
+  }
+  ul.innerHTML = rows.map((r, i) => (
+    '<li>' +
+      '<span class="lb-rank">' + (i + 1) + '.</span>' +
+      '<span class="lb-name">' + String(r.name || '').replace(/[<>&]/g, '') + '</span>' +
+      '<span class="lb-score">' + (r.score | 0) + '</span>' +
+    '</li>'
+  )).join('');
+}
+function _refreshLeaderboard() {
+  _fetchLeaderboard().then((data) => {
+    if (data && data.ok) _renderLeaderboard(data.rows || []);
+    else _renderLeaderboard([]);
+  });
+}
+// Pull on initial load.
+try { _refreshLeaderboard(); } catch (e) {}
+window._refreshLeaderboard = _refreshLeaderboard;
+window._submitScore = _submitScore;
+
 function _showStartError(msg) {
   const el = document.getElementById('start-error');
   if (el) el.textContent = msg || '';
@@ -15100,8 +15207,12 @@ async function _submitConsentAndPlay() {
   const consent = !!(consentEl && consentEl.checked);
   // Clear stale error class
   if (emailEl) emailEl.classList.remove('invalid');
-  if (!email || !_emailLooksValid(email)) {
-    if (emailEl) { emailEl.classList.add('invalid'); emailEl.focus(); }
+  // Reject if blank, malformed, OR the value was placed there by
+  // autofill/restore rather than typed by the user. The _emailUserTyped
+  // flag is set on 'input' / 'paste'; anything else (browser autofill,
+  // password manager, programmatic value set) won't trip it.
+  if (!email || !_emailLooksValid(email) || (typeof _emailUserTyped !== 'undefined' && !_emailUserTyped)) {
+    if (emailEl) { emailEl.classList.add('invalid'); emailEl.value = ''; emailEl.focus(); }
     _showStartError(tr('consent_err_email'));
     return;
   }
@@ -15124,10 +15235,10 @@ async function _submitConsentAndPlay() {
     at: Date.now(),
     ua: (navigator.userAgent || '').slice(0, 180),
   };
-  // Persist locally regardless of server reachability — returning
-  // players don't re-type and we can flush queued records the next
-  // time the page is online.
-  try { localStorage.setItem('ti_email', email); } catch (e) {}
+  // Email is intentionally NOT persisted to localStorage anymore —
+  // every session must explicitly type it. Stash only in-memory so
+  // the score submission can cross-ref it for this session.
+  try { window._lastSessionEmail = email; } catch (e) {}
   try { localStorage.setItem('ti_consent_at', String(Date.now())); } catch (e) {}
 
   // Fire-and-forget the POST. Game starts immediately; if the network
@@ -15338,6 +15449,18 @@ startBtn.addEventListener('click', beginGame);
 nameInput.addEventListener('keydown', (e) => { if (e.code === 'Enter') _submitConsentAndPlay(); });
 const _emailInputEl = document.getElementById('email-input');
 if (_emailInputEl) _emailInputEl.addEventListener('keydown', (e) => { if (e.code === 'Enter') _submitConsentAndPlay(); });
+// Track whether the email was actually typed by the user. Autofill /
+// password-manager fill / localStorage restore won't flip this — so
+// validation can reject any value the user didn't explicitly enter.
+let _emailUserTyped = false;
+if (_emailInputEl) {
+  _emailInputEl.addEventListener('input',  () => { _emailUserTyped = true; });
+  _emailInputEl.addEventListener('paste',  () => { _emailUserTyped = true; });
+  // Belt-and-braces: blank the field one tick after load to defeat
+  // late autofill that fires after our initial clear.
+  setTimeout(() => { try { if (!_emailUserTyped) _emailInputEl.value = ''; } catch (e) {} }, 250);
+  setTimeout(() => { try { if (!_emailUserTyped) _emailInputEl.value = ''; } catch (e) {} }, 1500);
+}
 
 // Pause overlay buttons: Resume unpauses, Menu reuses the existing
 // rejoin flow (clears stored email + reloads the page to the menu).
@@ -16100,6 +16223,9 @@ const I18N_STRINGS = {
     pause_hint_gp: 'Home / Start pour reprendre',
     pause_resume_btn: 'REPRENDRE',
     pause_menu_btn: 'RETOUR AU MENU',
+    lb_title: '🏆 MEILLEURS CAPITAINES',
+    lb_loading: 'Chargement…',
+    lb_empty: 'Pas encore de scores',
     respawn_title: 'NAUFRAGE',
     exo_arrow_text: '\u2699 R\u00C9CUP\u00C8RE TES MODULES PERDUS',
     hydro_warn: '\u26A0 L\u2019HYDRONAUTE EST PROT\u00C9G\u00C9E !<br><span>Ne l\u2019attaquez pas \u2014 vous subissez les d\u00E9g\u00E2ts</span>',
@@ -16234,6 +16360,9 @@ const I18N_STRINGS = {
     pause_hint_gp: 'Press Home / Start to resume',
     pause_resume_btn: 'RESUME',
     pause_menu_btn: 'BACK TO MENU',
+    lb_title: '🏆 TOP CAPTAINS',
+    lb_loading: 'Loading…',
+    lb_empty: 'No scores yet',
     respawn_title: 'SHIPWRECK',
     exo_arrow_text: '\u2699 RECOVER YOUR LOST MODULES',
     hydro_warn: '\u26A0 THE HYDRONAUTE IS PROTECTED !<br><span>Do not attack her \u2014 you take the damage</span>',
