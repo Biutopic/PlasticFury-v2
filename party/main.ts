@@ -858,7 +858,22 @@ export default class TrashureRoom implements Party.Server {
             status: 400, headers: { ...cors, "Content-Type": "application/json" },
           });
         }
+        // Dedup: if the same (email, score) was POSTed in the last
+        // 60 seconds, silently drop. Game-over + REJOUER + queue-flush
+        // can all fire for the same round; we only want one row.
         const now = Date.now();
+        try {
+          // @ts-ignore — runtime storage
+          const recent = await (this.room as any).storage.list({ prefix: "score:" });
+          for (const v of (recent as Map<string, any>).values()) {
+            if (v && v.email === email && v.score === score &&
+                typeof v.at === "number" && (now - v.at) < 60000) {
+              return new Response(JSON.stringify({ ok: true, dedup: true }), {
+                status: 200, headers: { ...cors, "Content-Type": "application/json" },
+              });
+            }
+          }
+        } catch {}
         const rec = {
           name,
           score,

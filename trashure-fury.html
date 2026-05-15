@@ -10867,13 +10867,15 @@ function showGameOver() {
   // Submit the final score to the global leaderboard. If it lands AND
   // the player ranks in the top 10, we paint a "tu es N°X" banner on
   // the game-over card so they know they made it. Skipped for spectator
-  // / no-name edge cases.
+  // / no-name edge cases. Sets window._scoreSubmittedForRound so the
+  // REJOUER hook doesn't fire a duplicate POST.
   try {
     const finalName  = String(localPlayer.name || '').trim().slice(0, 32);
     const finalScore = (localPlayer.totalCollected | 0);
     const finalAt    = Date.now();
     const storedEmail = String(window._lastSessionEmail || '');
-    if (finalName && finalScore > 0) {
+    if (finalName && finalScore > 0 && !window._scoreSubmittedForRound) {
+      window._scoreSubmittedForRound = true;
       _submitScore(finalName, finalScore, storedEmail).then((res) => {
         if (!res || !res.ok) {
           _renderRankNote(null);
@@ -15272,9 +15274,12 @@ function _flushScoreQueue() {
 // Returns a Promise<{ok:boolean, rank?:number, total?:number}>. rank/total
 // only set when the score actually landed AND the refreshed leaderboard
 // shows the player in it. Drops the submission on 4xx (no email/no
-// consent) — those will never succeed, no point retrying.
+// consent) — those will never succeed, no point retrying. Each queued
+// record carries a sentAt timestamp so a successful POST's later retry
+// (queue flush after page reload) can be deduped locally too — the
+// server also dedupes within 60s.
 function _submitScore(name, score, email) {
-  const rec = { name, score, email: email || '' };
+  const rec = { name, score, email: email || '', at: Date.now() };
   return new Promise((resolve) => {
     let done = false;
     const finish = (ok) => { if (!done) { done = true; resolve({ ok }); } };
@@ -15287,10 +15292,8 @@ function _submitScore(name, score, email) {
       }).then(r => {
         if (r && r.ok) { finish(true); return; }
         if (r && r.status >= 400 && r.status < 500) {
-          // Server refused (likely no_email / no_consent). Don't queue.
           finish(false); return;
         }
-        // 5xx / null — try again later.
         const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
         finish(false);
       }).catch(() => {
@@ -15525,14 +15528,15 @@ function _rejoinSession() {
   try { _mpSend({ type: 'rejoin' }); } catch (e) {}
   // Submit a score for partial games too. If the player is mid-round
   // with some plastic collected and hits REJOUER (or BACK TO MENU
-  // from pause), their effort still lands on the leaderboard. This
-  // is fire-and-forget; the page reload below doesn't wait.
+  // from pause), their effort still lands on the leaderboard. Skipped
+  // when the game-over flow has already submitted (window._scoreSubmittedForRound).
   try {
-    if (typeof localPlayer !== 'undefined' && localPlayer) {
+    if (typeof localPlayer !== 'undefined' && localPlayer && !window._scoreSubmittedForRound) {
       const finalName  = String(localPlayer.name || '').trim().slice(0, 32);
       const finalScore = (localPlayer.totalCollected | 0);
       const storedEmail = String(window._lastSessionEmail || '');
       if (finalName && finalScore > 0 && storedEmail && typeof _submitScore === 'function') {
+        window._scoreSubmittedForRound = true;
         _submitScore(finalName, finalScore, storedEmail);
       }
     }
