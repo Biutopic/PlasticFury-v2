@@ -723,7 +723,14 @@ export default class TrashureRoom implements Party.Server {
             });
           }
           rows.sort((a, b) => b.score - a.score || a.at - b.at);
-          return new Response(JSON.stringify({ ok: true, rows }), {
+          // Pull rejected attempts too so the admin can see why a score
+          // didn't land.
+          // @ts-ignore
+          const allRejects = await (this.room as any).storage.list({ prefix: "reject:" });
+          const rejects: any[] = [];
+          for (const v of (allRejects as Map<string, any>).values()) rejects.push(v);
+          rejects.sort((a, b) => b.at - a.at);
+          return new Response(JSON.stringify({ ok: true, rows, rejects: rejects.slice(0, 20) }), {
             status: 200, headers: { ...cors, "Content-Type": "application/json" },
           });
         } catch (e) {
@@ -775,23 +782,47 @@ export default class TrashureRoom implements Party.Server {
         const score = Math.max(0, Math.min(99999, Number(body.score) | 0));
         const email = String(body.email || "").trim().toLowerCase().slice(0, 200);
         const consent = body.consent === true;
+        // Helper: log every rejected POST so the admin endpoint can
+        // surface them and we can debug "I played but my score didn't
+        // show up" mysteries. Cap at 50 rejects to avoid log spam.
+        const logReject = async (err: string) => {
+          try {
+            const rec = {
+              at: Date.now(), err,
+              name, score,
+              email: email ? email.slice(0, 12) + "..." : "",
+              consent,
+            };
+            const k = "reject:" + Date.now().toString(36).padStart(10, "0")
+                    + ":" + Math.random().toString(36).slice(2, 6);
+            // @ts-ignore
+            await (this.room as any).storage.put(k, rec);
+            // Trim: keep newest 50
+            // @ts-ignore
+            const all = await (this.room as any).storage.list({ prefix: "reject:" });
+            const keys = Array.from((all as Map<string, any>).keys()).sort();
+            if (keys.length > 50) {
+              for (const old of keys.slice(0, keys.length - 50)) {
+                // @ts-ignore
+                await (this.room as any).storage.delete(old);
+              }
+            }
+          } catch {}
+        };
         if (!name || !Number.isFinite(score)) {
+          await logReject("bad_score");
           return new Response(JSON.stringify({ ok: false, err: "bad_score" }), {
             status: 400, headers: { ...cors, "Content-Type": "application/json" },
           });
         }
-        // Server-side gate: reject scores without a real email. The
-        // client validates too, but the server is the source of truth
-        // — even a tampered or stale client build can't smuggle in an
-        // anonymous score this way.
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+          await logReject("no_email");
           return new Response(JSON.stringify({ ok: false, err: "no_email" }), {
             status: 400, headers: { ...cors, "Content-Type": "application/json" },
           });
         }
-        // And the consent flag must be explicitly true — same gate as
-        // the consent-record POST. No anonymous, no un-consented data.
         if (!consent) {
+          await logReject("no_consent");
           return new Response(JSON.stringify({ ok: false, err: "no_consent" }), {
             status: 400, headers: { ...cors, "Content-Type": "application/json" },
           });

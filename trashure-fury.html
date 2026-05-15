@@ -15523,6 +15523,20 @@ try {
 // the player doesn't have to dismiss the menu screen twice.
 function _rejoinSession() {
   try { _mpSend({ type: 'rejoin' }); } catch (e) {}
+  // Submit a score for partial games too. If the player is mid-round
+  // with some plastic collected and hits REJOUER (or BACK TO MENU
+  // from pause), their effort still lands on the leaderboard. This
+  // is fire-and-forget; the page reload below doesn't wait.
+  try {
+    if (typeof localPlayer !== 'undefined' && localPlayer) {
+      const finalName  = String(localPlayer.name || '').trim().slice(0, 32);
+      const finalScore = (localPlayer.totalCollected | 0);
+      const storedEmail = String(window._lastSessionEmail || '');
+      if (finalName && finalScore > 0 && storedEmail && typeof _submitScore === 'function') {
+        _submitScore(finalName, finalScore, storedEmail);
+      }
+    }
+  } catch (e) {}
   // REJOUER goes back to the menu AND clears the saved email + the
   // consent timestamp — the next session is treated as a brand-new
   // player. Each opt-in is fresh: empty email field, unticked
