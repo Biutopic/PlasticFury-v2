@@ -694,7 +694,8 @@ export default class TrashureRoom implements Party.Server {
     // forever and rotate before public mention.
     if (req.method === "GET") {
       const url0 = new URL(req.url);
-      if (url0.searchParams.get("action") === "admin") {
+      const adminAction = url0.searchParams.get("action");
+      if (adminAction === "admin" || adminAction === "purge_anon") {
         const ADMIN_TOKEN = "trashure-admin-2026-may";
         if (url0.searchParams.get("token") !== ADMIN_TOKEN) {
           return new Response(JSON.stringify({ ok: false, err: "forbidden" }), {
@@ -705,8 +706,21 @@ export default class TrashureRoom implements Party.Server {
           // @ts-ignore — runtime storage
           const all = await (this.room as any).storage.list({ prefix: "score:" });
           const rows: any[] = [];
-          for (const v of (all as Map<string, any>).values()) {
-            if (v && typeof v.score === "number") rows.push(v);
+          const purgeKeys: string[] = [];
+          for (const [k, v] of (all as Map<string, any>).entries()) {
+            if (v && typeof v.score === "number") {
+              rows.push(v);
+              if (!v.email) purgeKeys.push(k);
+            }
+          }
+          if (adminAction === "purge_anon") {
+            for (const k of purgeKeys) {
+              // @ts-ignore
+              await (this.room as any).storage.delete(k);
+            }
+            return new Response(JSON.stringify({ ok: true, purged: purgeKeys.length }), {
+              status: 200, headers: { ...cors, "Content-Type": "application/json" },
+            });
           }
           rows.sort((a, b) => b.score - a.score || a.at - b.at);
           return new Response(JSON.stringify({ ok: true, rows }), {
@@ -759,8 +773,18 @@ export default class TrashureRoom implements Party.Server {
       if (body.kind === "score") {
         const name = String(body.name || "").trim().slice(0, 32);
         const score = Math.max(0, Math.min(99999, Number(body.score) | 0));
+        const email = String(body.email || "").trim().toLowerCase().slice(0, 200);
         if (!name || !Number.isFinite(score)) {
           return new Response(JSON.stringify({ ok: false, err: "bad_score" }), {
+            status: 400, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+        // Server-side gate: reject scores without a real email. The
+        // client validates too, but the server is the source of truth
+        // — even a tampered or stale client build can't smuggle in an
+        // anonymous score this way.
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+          return new Response(JSON.stringify({ ok: false, err: "no_email" }), {
             status: 400, headers: { ...cors, "Content-Type": "application/json" },
           });
         }
@@ -768,7 +792,7 @@ export default class TrashureRoom implements Party.Server {
         const rec = {
           name,
           score,
-          email: String(body.email || "").toLowerCase().slice(0, 200),
+          email,
           at: now,
         };
         // High score wins: sortable key by score desc then time asc.
