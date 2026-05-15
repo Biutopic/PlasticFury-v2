@@ -1261,6 +1261,25 @@
     #gameover-overlay.active.victory-bg {
       background: radial-gradient(ellipse at center, rgba(40,30,0,0.92) 0%, rgba(5,10,20,0.95) 100%);
     }
+    /* Leaderboard-rank banner — only painted when the player lands in
+       the global top 10. Sits just under the score / rang line. */
+    .gameover-rank-note {
+      margin: 6px auto 0;
+      padding: 8px 18px;
+      font-family: var(--font-heading);
+      font-size: 0.92rem; letter-spacing: 0.12em;
+      color: #1a1100;
+      background: linear-gradient(135deg, #ffd700, #ffae00);
+      border-radius: 999px;
+      display: inline-block;
+      box-shadow: 0 4px 18px rgba(255, 180, 0, 0.45);
+      animation: rank-pop 0.6s cubic-bezier(.2,.9,.3,1.2);
+    }
+    @keyframes rank-pop {
+      0%   { transform: scale(0.4); opacity: 0; }
+      60%  { transform: scale(1.08); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
     /* ---- SCIENCE RECAP ---- */
     .science-recap {
       width: 440px; max-width: 90vw;
@@ -2210,6 +2229,9 @@
   <div class="gameover-title" id="gameover-title">TEMPS &Eacute;COUL&Eacute; !</div>
   <div class="gameover-score" id="gameover-score">Score : 0</div>
   <div class="gameover-rank" id="gameover-rank">Rang : #1</div>
+  <!-- Filled in by _renderRankNote when the player lands in the
+       global top-10 leaderboard. Hidden by default. -->
+  <div class="gameover-rank-note" id="gameover-rank-note" hidden></div>
 
   <!-- Science recap -->
   <div class="science-recap glass-panel" id="science-recap">
@@ -10842,17 +10864,62 @@ function showGameOver() {
       goBtn.focus();
     }
   } catch (e) {}
-  // Submit the final score to the global leaderboard. Fire-and-forget;
-  // failure is invisible to the player. Only submits real local plays
-  // (skipped for spectator / no-name edge cases).
+  // Submit the final score to the global leaderboard. If it lands AND
+  // the player ranks in the top 10, we paint a "tu es N°X" banner on
+  // the game-over card so they know they made it. Skipped for spectator
+  // / no-name edge cases.
   try {
     const finalName  = String(localPlayer.name || '').trim().slice(0, 32);
     const finalScore = (localPlayer.totalCollected | 0);
+    const finalAt    = Date.now();
     const storedEmail = String(window._lastSessionEmail || '');
     if (finalName && finalScore > 0) {
-      _submitScore(finalName, finalScore, storedEmail);
+      _submitScore(finalName, finalScore, storedEmail).then((res) => {
+        if (!res || !res.ok) {
+          _renderRankNote(null);
+          return;
+        }
+        // Pull a fresh top 10 and find ourselves. Match by name + score
+        // + timestamp window (server "at" is wall-clock so we accept a
+        // small skew); if multiple match, the earliest wins.
+        _fetchLeaderboard().then((data) => {
+          const rows = (data && data.ok && Array.isArray(data.rows)) ? data.rows : [];
+          if (rows.length) {
+            _writeLbCache(rows);
+            _renderLeaderboard(rows);
+          }
+          let rank = -1;
+          for (let i = 0; i < rows.length; i++) {
+            const r = rows[i];
+            if (r.name === finalName && r.score === finalScore &&
+                Math.abs((r.at | 0) - finalAt) < 60000) {
+              rank = i + 1; break;
+            }
+          }
+          // Fallback: name+score match anywhere
+          if (rank < 0) {
+            for (let i = 0; i < rows.length; i++) {
+              if (rows[i].name === finalName && rows[i].score === finalScore) {
+                rank = i + 1; break;
+              }
+            }
+          }
+          _renderRankNote(rank > 0 ? { rank, total: rows.length } : null);
+        });
+      });
     }
   } catch (e) {}
+}
+// Paints the "you made the leaderboard" banner on the game-over card.
+// rank = null/undefined => hides the banner.
+function _renderRankNote(info) {
+  const el = document.getElementById('gameover-rank-note');
+  if (!el) return;
+  if (!info || !info.rank) { el.hidden = true; el.textContent = ''; return; }
+  const tpl = tr('go_rank_made');
+  // tpl contains {rank} placeholder; e.g. "🏆 #3 sur 10 meilleurs capitaines !"
+  el.textContent = String(tpl).replace('{rank}', String(info.rank));
+  el.hidden = false;
 }
 
 // Legacy "REJOUER" button — now calls the soft rejoin (new server
@@ -15182,8 +15249,8 @@ function _writeScoreQueue(arr) {
 function _flushScoreQueue() {
   const q = _readScoreQueue();
   if (!q.length) return;
-  // Drain in order. Each successful POST removes its record; a failure
-  // re-queues whatever's left so we don't busy-loop on a network blip.
+  // Drain in order. 2xx = drop, 4xx = drop (server permanently
+  // refuses this payload), 5xx / network = keep for next try.
   let remaining = q.slice();
   const step = () => {
     if (!remaining.length) { _writeScoreQueue([]); return; }
@@ -15194,31 +15261,47 @@ function _flushScoreQueue() {
       body: JSON.stringify({ kind: 'score', consent: true, ...rec }),
       keepalive: true,
     }).then(r => {
-      if (r && r.ok) { remaining = remaining.slice(1); _writeScoreQueue(remaining); step(); }
-      else { /* leave queued for next try */ }
-    }).catch(() => { /* leave queued */ });
+      if (r && (r.ok || (r.status >= 400 && r.status < 500))) {
+        remaining = remaining.slice(1); _writeScoreQueue(remaining); step();
+      } else { /* 5xx / null — leave queued */ }
+    }).catch(() => { /* network — leave queued */ });
   };
   step();
 }
 
+// Returns a Promise<{ok:boolean, rank?:number, total?:number}>. rank/total
+// only set when the score actually landed AND the refreshed leaderboard
+// shows the player in it. Drops the submission on 4xx (no email/no
+// consent) — those will never succeed, no point retrying.
 function _submitScore(name, score, email) {
   const rec = { name, score, email: email || '' };
-  try {
-    fetch(_CONSENT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'score', consent: true, ...rec }),
-      keepalive: true,
-    }).then(r => {
-      if (!r || !r.ok) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve({ ok }); } };
+    try {
+      fetch(_CONSENT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'score', consent: true, ...rec }),
+        keepalive: true,
+      }).then(r => {
+        if (r && r.ok) { finish(true); return; }
+        if (r && r.status >= 400 && r.status < 500) {
+          // Server refused (likely no_email / no_consent). Don't queue.
+          finish(false); return;
+        }
+        // 5xx / null — try again later.
         const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
-      }
-    }).catch(() => {
+        finish(false);
+      }).catch(() => {
+        const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
+        finish(false);
+      });
+    } catch (e) {
       const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
-    });
-  } catch (e) {
-    const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
-  }
+      finish(false);
+    }
+  });
 }
 function _renderLeaderboard(rows) {
   const ul = document.getElementById('global-lb-list');
@@ -16317,6 +16400,7 @@ const I18N_STRINGS = {
     lb_title: '🏆 MEILLEURS CAPITAINES',
     lb_loading: 'Chargement…',
     lb_empty: 'Pas encore de scores',
+    go_rank_made: '🏆 N° {rank} au classement mondial !',
     respawn_title: 'NAUFRAGE',
     exo_arrow_text: '\u2699 R\u00C9CUP\u00C8RE TES MODULES PERDUS',
     hydro_warn: '\u26A0 L\u2019HYDRONAUTE EST PROT\u00C9G\u00C9E !<br><span>Ne l\u2019attaquez pas \u2014 vous subissez les d\u00E9g\u00E2ts</span>',
@@ -16454,6 +16538,7 @@ const I18N_STRINGS = {
     lb_title: '🏆 TOP CAPTAINS',
     lb_loading: 'Loading…',
     lb_empty: 'No scores yet',
+    go_rank_made: '🏆 #{rank} on the world leaderboard !',
     respawn_title: 'SHIPWRECK',
     exo_arrow_text: '\u2699 RECOVER YOUR LOST MODULES',
     hydro_warn: '\u26A0 THE HYDRONAUTE IS PROTECTED !<br><span>Do not attack her \u2014 you take the damage</span>',
