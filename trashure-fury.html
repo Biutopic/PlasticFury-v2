@@ -15511,7 +15511,15 @@ function beginGame() {
   _beginLocalRound();
 }
 
-startBtn.addEventListener('click', beginGame);
+// IMPORTANT: do NOT add a click → beginGame() listener here. The
+// inline onclick on #start-btn routes through _submitConsentAndPlay
+// which validates email + consent before calling beginSolo(). A
+// second click listener that called beginGame() directly was the
+// long-standing bypass: clicking LARGUER fired BOTH the validator
+// AND beginGame() — so even an empty/invalid email started the game.
+// The leaderboard ended up with anonymous (empty-email) entries
+// because of this exact bug. Keep beginGame() callable from other
+// code paths (split-screen, future MP) — just don't wire it here.
 // Enter key inside the name field launches the same mode as the
 // LARGUER LES AMARRES button — solo, while online MP is parked.
 // (Was beginGame, which auto-connected to the PartyKit server even
