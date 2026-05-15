@@ -774,6 +774,7 @@ export default class TrashureRoom implements Party.Server {
         const name = String(body.name || "").trim().slice(0, 32);
         const score = Math.max(0, Math.min(99999, Number(body.score) | 0));
         const email = String(body.email || "").trim().toLowerCase().slice(0, 200);
+        const consent = body.consent === true;
         if (!name || !Number.isFinite(score)) {
           return new Response(JSON.stringify({ ok: false, err: "bad_score" }), {
             status: 400, headers: { ...cors, "Content-Type": "application/json" },
@@ -788,11 +789,19 @@ export default class TrashureRoom implements Party.Server {
             status: 400, headers: { ...cors, "Content-Type": "application/json" },
           });
         }
+        // And the consent flag must be explicitly true — same gate as
+        // the consent-record POST. No anonymous, no un-consented data.
+        if (!consent) {
+          return new Response(JSON.stringify({ ok: false, err: "no_consent" }), {
+            status: 400, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
         const now = Date.now();
         const rec = {
           name,
           score,
           email,
+          consent: true,
           at: now,
         };
         // High score wins: sortable key by score desc then time asc.

@@ -15191,7 +15191,7 @@ function _flushScoreQueue() {
     fetch(_CONSENT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'score', ...rec }),
+      body: JSON.stringify({ kind: 'score', consent: true, ...rec }),
       keepalive: true,
     }).then(r => {
       if (r && r.ok) { remaining = remaining.slice(1); _writeScoreQueue(remaining); step(); }
@@ -15207,7 +15207,7 @@ function _submitScore(name, score, email) {
     fetch(_CONSENT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'score', ...rec }),
+      body: JSON.stringify({ kind: 'score', consent: true, ...rec }),
       keepalive: true,
     }).then(r => {
       if (!r || !r.ok) {
