@@ -687,6 +687,38 @@ export default class TrashureRoom implements Party.Server {
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
     }
+    // GET ?action=admin&token=... → dump full score records (name +
+    // score + email + at). Used to verify that the menu's email gate
+    // is actually capturing emails. Token-protected because email
+    // addresses are personal data — don't make it the same value
+    // forever and rotate before public mention.
+    if (req.method === "GET") {
+      const url0 = new URL(req.url);
+      if (url0.searchParams.get("action") === "admin") {
+        const ADMIN_TOKEN = "trashure-admin-2026-may";
+        if (url0.searchParams.get("token") !== ADMIN_TOKEN) {
+          return new Response(JSON.stringify({ ok: false, err: "forbidden" }), {
+            status: 403, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+        try {
+          // @ts-ignore — runtime storage
+          const all = await (this.room as any).storage.list({ prefix: "score:" });
+          const rows: any[] = [];
+          for (const v of (all as Map<string, any>).values()) {
+            if (v && typeof v.score === "number") rows.push(v);
+          }
+          rows.sort((a, b) => b.score - a.score || a.at - b.at);
+          return new Response(JSON.stringify({ ok: true, rows }), {
+            status: 200, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ ok: false, err: "storage" }), {
+            status: 500, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
     // GET ?action=top → return the global top-N leaderboard (used by
     // the in-game leaderboard panel and the game-over screen).
     if (req.method === "GET") {
