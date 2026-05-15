@@ -15146,23 +15146,79 @@ const _CONSENT_URL = (() => {
   return 'https://' + host + '/parties/main/consents';
 })();
 // ---- Global leaderboard ----
-// Fetches top scores from PartyKit (shared with the consents room)
-// and posts the local player's final score on game-over.
+// Offline-tolerant. The last successful fetch is cached in localStorage
+// so the menu shows real data even with no network. Score submissions
+// that fail are queued and retried on the next online event.
+const _LB_CACHE_KEY  = 'ti_lb_cache';
+const _LB_QUEUE_KEY  = 'ti_score_queue';
+
+function _readLbCache() {
+  try {
+    const raw = localStorage.getItem(_LB_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.rows)) return parsed.rows;
+  } catch (e) {}
+  return null;
+}
+function _writeLbCache(rows) {
+  try { localStorage.setItem(_LB_CACHE_KEY, JSON.stringify({ rows, at: Date.now() })); } catch (e) {}
+}
+
 function _fetchLeaderboard() {
   return fetch(_CONSENT_URL + '?action=top&limit=10', {
     method: 'GET',
     cache: 'no-store',
   }).then(r => r.ok ? r.json() : null).catch(() => null);
 }
+
+function _readScoreQueue() {
+  try { return JSON.parse(localStorage.getItem(_LB_QUEUE_KEY) || '[]') || []; }
+  catch (e) { return []; }
+}
+function _writeScoreQueue(arr) {
+  try { localStorage.setItem(_LB_QUEUE_KEY, JSON.stringify(arr.slice(-50))); } catch (e) {}
+}
+function _flushScoreQueue() {
+  const q = _readScoreQueue();
+  if (!q.length) return;
+  // Drain in order. Each successful POST removes its record; a failure
+  // re-queues whatever's left so we don't busy-loop on a network blip.
+  let remaining = q.slice();
+  const step = () => {
+    if (!remaining.length) { _writeScoreQueue([]); return; }
+    const rec = remaining[0];
+    fetch(_CONSENT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'score', ...rec }),
+      keepalive: true,
+    }).then(r => {
+      if (r && r.ok) { remaining = remaining.slice(1); _writeScoreQueue(remaining); step(); }
+      else { /* leave queued for next try */ }
+    }).catch(() => { /* leave queued */ });
+  };
+  step();
+}
+
 function _submitScore(name, score, email) {
+  const rec = { name, score, email: email || '' };
   try {
     fetch(_CONSENT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'score', name, score, email: email || '' }),
+      body: JSON.stringify({ kind: 'score', ...rec }),
       keepalive: true,
-    }).catch(() => {});
-  } catch (e) {}
+    }).then(r => {
+      if (!r || !r.ok) {
+        const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
+      }
+    }).catch(() => {
+      const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
+    });
+  } catch (e) {
+    const q = _readScoreQueue(); q.push(rec); _writeScoreQueue(q);
+  }
 }
 function _renderLeaderboard(rows) {
   const ul = document.getElementById('global-lb-list');
@@ -15180,13 +15236,29 @@ function _renderLeaderboard(rows) {
   )).join('');
 }
 function _refreshLeaderboard() {
+  // Paint the cache immediately so the panel never looks empty offline.
+  const cached = _readLbCache();
+  if (cached) _renderLeaderboard(cached);
+  // Then try to refresh. On success we replace the cache + rerender;
+  // on failure we keep what's already on screen.
   _fetchLeaderboard().then((data) => {
-    if (data && data.ok) _renderLeaderboard(data.rows || []);
-    else _renderLeaderboard([]);
+    if (data && data.ok && Array.isArray(data.rows)) {
+      _writeLbCache(data.rows);
+      _renderLeaderboard(data.rows);
+    } else if (!cached) {
+      _renderLeaderboard([]);
+    }
   });
 }
-// Pull on initial load.
+// Pull on initial load + try to flush any queued scores.
 try { _refreshLeaderboard(); } catch (e) {}
+try { _flushScoreQueue(); } catch (e) {}
+// Retry on every online event — covers the kiosk case where the
+// machine boots without wifi and reconnects later.
+window.addEventListener('online', () => {
+  setTimeout(() => { try { _flushScoreQueue(); } catch (e) {} }, 300);
+  setTimeout(() => { try { _refreshLeaderboard(); } catch (e) {} }, 600);
+});
 window._refreshLeaderboard = _refreshLeaderboard;
 window._submitScore = _submitScore;
 
