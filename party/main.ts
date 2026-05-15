@@ -730,7 +730,19 @@ export default class TrashureRoom implements Party.Server {
           const rejects: any[] = [];
           for (const v of (allRejects as Map<string, any>).values()) rejects.push(v);
           rejects.sort((a, b) => b.at - a.at);
-          return new Response(JSON.stringify({ ok: true, rows, rejects: rejects.slice(0, 20) }), {
+          // Pull consent records too — every email that's ever started
+          // a game lives here, independent of whether they finished.
+          // @ts-ignore
+          const allConsents = await (this.room as any).storage.list({ prefix: "consent:" });
+          const consents: any[] = [];
+          for (const v of (allConsents as Map<string, any>).values()) consents.push(v);
+          consents.sort((a, b) => (b.at || 0) - (a.at || 0));
+          return new Response(JSON.stringify({
+            ok: true,
+            rows,
+            rejects: rejects.slice(0, 20),
+            consents: consents.slice(0, 100),
+          }), {
             status: 200, headers: { ...cors, "Content-Type": "application/json" },
           });
         } catch (e) {
