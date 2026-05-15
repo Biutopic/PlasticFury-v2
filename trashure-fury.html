@@ -15280,10 +15280,12 @@ async function _submitConsentAndPlay() {
   // Clear stale error class
   if (emailEl) emailEl.classList.remove('invalid');
   // Reject if blank, malformed, OR the value was placed there by
-  // autofill/restore rather than typed by the user. The _emailUserTyped
-  // flag is set on 'input' / 'paste'; anything else (browser autofill,
-  // password manager, programmatic value set) won't trip it.
-  if (!email || !_emailLooksValid(email) || (typeof _emailUserTyped !== 'undefined' && !_emailUserTyped)) {
+  // autofill/restore rather than typed by the user. window._emailUserTyped
+  // is set on 'input' / 'paste' / character keydown; anything else
+  // (browser autofill, password manager, programmatic value set) won't
+  // trip it. Using window. so it's reachable from any caller scope.
+  const _typed = !!window._emailUserTyped;
+  if (!email || !_emailLooksValid(email) || !_typed) {
     if (emailEl) { emailEl.classList.add('invalid'); emailEl.value = ''; emailEl.focus(); }
     _showStartError(tr('consent_err_email'));
     return;
@@ -15524,14 +15526,23 @@ if (_emailInputEl) _emailInputEl.addEventListener('keydown', (e) => { if (e.code
 // Track whether the email was actually typed by the user. Autofill /
 // password-manager fill / localStorage restore won't flip this — so
 // validation can reject any value the user didn't explicitly enter.
-let _emailUserTyped = false;
+// Attached to window so cross-script callers (e.g. the inline onclick
+// on the start button) can read it without ReferenceError.
+window._emailUserTyped = false;
 if (_emailInputEl) {
-  _emailInputEl.addEventListener('input',  () => { _emailUserTyped = true; });
-  _emailInputEl.addEventListener('paste',  () => { _emailUserTyped = true; });
+  _emailInputEl.addEventListener('input',  () => { window._emailUserTyped = true; });
+  _emailInputEl.addEventListener('paste',  () => { window._emailUserTyped = true; });
+  _emailInputEl.addEventListener('keydown', (e) => {
+    // Any key press that produces a character flips the flag too. This
+    // catches the case where the browser populates the field via
+    // autofill and the player then merely focuses + tabs out without
+    // changing it — we still want them to have at least pressed a key.
+    if (e.key && e.key.length === 1) window._emailUserTyped = true;
+  });
   // Belt-and-braces: blank the field one tick after load to defeat
   // late autofill that fires after our initial clear.
-  setTimeout(() => { try { if (!_emailUserTyped) _emailInputEl.value = ''; } catch (e) {} }, 250);
-  setTimeout(() => { try { if (!_emailUserTyped) _emailInputEl.value = ''; } catch (e) {} }, 1500);
+  setTimeout(() => { try { if (!window._emailUserTyped) _emailInputEl.value = ''; } catch (e) {} }, 250);
+  setTimeout(() => { try { if (!window._emailUserTyped) _emailInputEl.value = ''; } catch (e) {} }, 1500);
 }
 
 // Pause overlay buttons: Resume unpauses, Menu reuses the existing
