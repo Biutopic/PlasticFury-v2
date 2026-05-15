@@ -695,7 +695,7 @@ export default class TrashureRoom implements Party.Server {
     if (req.method === "GET") {
       const url0 = new URL(req.url);
       const adminAction = url0.searchParams.get("action");
-      if (adminAction === "admin" || adminAction === "purge_anon") {
+      if (adminAction === "admin" || adminAction === "purge_anon" || adminAction === "purge_name") {
         const ADMIN_TOKEN = "trashure-admin-2026-may";
         if (url0.searchParams.get("token") !== ADMIN_TOKEN) {
           return new Response(JSON.stringify({ ok: false, err: "forbidden" }), {
@@ -719,6 +719,25 @@ export default class TrashureRoom implements Party.Server {
               await (this.room as any).storage.delete(k);
             }
             return new Response(JSON.stringify({ ok: true, purged: purgeKeys.length }), {
+              status: 200, headers: { ...cors, "Content-Type": "application/json" },
+            });
+          }
+          if (adminAction === "purge_name") {
+            const target = String(url0.searchParams.get("name") || "");
+            if (!target) {
+              return new Response(JSON.stringify({ ok: false, err: "missing_name" }), {
+                status: 400, headers: { ...cors, "Content-Type": "application/json" },
+              });
+            }
+            const toDel: string[] = [];
+            for (const [k, v] of (all as Map<string, any>).entries()) {
+              if (v && v.name === target) toDel.push(k);
+            }
+            for (const k of toDel) {
+              // @ts-ignore
+              await (this.room as any).storage.delete(k);
+            }
+            return new Response(JSON.stringify({ ok: true, purged: toDel.length }), {
               status: 200, headers: { ...cors, "Content-Type": "application/json" },
             });
           }
