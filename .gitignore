@@ -25,3 +25,6 @@ dist-ssr
 
 # Claude Code session folder
 .claude/
+
+# Local secrets
+.env

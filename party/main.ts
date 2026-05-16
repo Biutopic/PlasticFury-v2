@@ -696,8 +696,8 @@ export default class TrashureRoom implements Party.Server {
       const url0 = new URL(req.url);
       const adminAction = url0.searchParams.get("action");
       if (adminAction === "admin" || adminAction === "purge_anon" || adminAction === "purge_name") {
-        const ADMIN_TOKEN = "trashure-admin-2026-may";
-        if (url0.searchParams.get("token") !== ADMIN_TOKEN) {
+        const ADMIN_TOKEN = (this.room as any).env.ADMIN_TOKEN as string;
+        if (!ADMIN_TOKEN || url0.searchParams.get("token") !== ADMIN_TOKEN) {
           return new Response(JSON.stringify({ ok: false, err: "forbidden" }), {
             status: 403, headers: { ...cors, "Content-Type": "application/json" },
           });

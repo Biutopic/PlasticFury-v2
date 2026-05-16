@@ -5769,31 +5769,41 @@ function spawnFireTrail(x, y, z, size) {
   });
 }
 
+let _fbExpPool = null;
 function spawnFireballExplosion(x, z, charge) {
+  if (!_fbExpPool) _fbExpPool = makeParticlePool(fbExpGeo, 80);
+  if (!_bombRingPool) _bombRingPool = makeParticlePool(bombRingGeo, 10);
   const wy = getWaveHeight(x, z, gameTime);
   const count = 6 + Math.floor(charge * 8);
   for (let i = 0; i < count; i++) {
+    const m = _fbExpPool.acquire();
+    if (!m) break;
     const angle = Math.random() * Math.PI * 2;
     const spd = 3 + Math.random() * 5;
-    const mat = fbTrailMats[Math.floor(Math.random() * 4)].clone();
-    const m = new THREE.Mesh(fbExpGeo, mat);
+    // Copy color from one of the warm-tone trail mats — the pool material is
+    // reused so the shader program cache stays hot instead of recompiling.
+    m.material.color.copy(fbTrailMats[Math.floor(Math.random() * 4)].color);
+    m.material.opacity = 0.7;
     m.scale.setScalar(0.6 + charge);
     m.position.set(x, wy + 1.5, z);
-    scene.add(m);
+    m.visible = true;
     splashParticles.push({
       mesh: m,
       vx: Math.cos(angle) * spd, vy: 2 + Math.random() * 5, vz: Math.sin(angle) * spd,
-      life: 0.5 + Math.random() * 0.4, isRing: false,
+      life: 0.5 + Math.random() * 0.4, isRing: false, pool: _fbExpPool,
     });
   }
-  const rm = bombRingMat.clone();
-  rm.color.set(0xff6600);
-  const ring = new THREE.Mesh(bombRingGeo, rm);
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.set(x, wy + 0.5, z);
-  ring.scale.setScalar(1 + charge * 1.5);
-  scene.add(ring);
-  splashParticles.push({ mesh: ring, vx: 0, vy: 0, vz: 0, life: 0.5, isRing: true });
+  const ring = _bombRingPool.acquire();
+  if (ring) {
+    ring.material.color.setHex(0xff6600);
+    ring.material.opacity = 0.8;
+    ring.material.side = THREE.DoubleSide;
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(x, wy + 0.5, z);
+    ring.scale.setScalar(1 + charge * 1.5);
+    ring.visible = true;
+    splashParticles.push({ mesh: ring, vx: 0, vy: 0, vz: 0, life: 0.5, isRing: true, pool: _bombRingPool });
+  }
 }
 
 let fbTrailTimer = 0;
@@ -8068,6 +8078,17 @@ const PINK_HP_COLOR = 0xff66aa;  // pink = health pickup
 const HP_PER_PINK_PICKUP = 15;
 const PINK_CHANCE = 0.15;  // 15% of spawns are pink (heal)
 
+// One MeshStandardMaterial per palette color — shared across every garbage
+// piece using that color so the WebGL shader cache is hit instead of
+// recompiled per spawn. Hundreds of garbage pieces share these instances.
+const PLASTIC_MATS = PLASTIC_COLORS.map(c => new THREE.MeshStandardMaterial({
+  color: c, roughness: 0.4, metalness: 0.05, side: THREE.DoubleSide,
+}));
+const HEAL_GARBAGE_MAT = new THREE.MeshStandardMaterial({
+  color: PINK_HP_COLOR, roughness: 0.4, metalness: 0.05, side: THREE.DoubleSide,
+  emissive: new THREE.Color(0xff4488), emissiveIntensity: 0.45,
+});
+
 // Separate map for pink-plastic holograms. Kept as siblings of the garbage
 // mesh in the scene graph (NOT children) so the mesh's random tilt/spin
 // doesn't affect the hologram's upright pillar orientation.
@@ -8102,15 +8123,11 @@ function addGarbageMesh(g) {
     mesh = fbxData.mesh.clone();
     mesh.scale.setScalar(fbxData.scale);
     mesh.castShadow = true;
-    // Pink = heal pickup, otherwise realistic plastic color
-    const rc = g.isHeal ? PINK_HP_COLOR : PLASTIC_COLORS[Math.floor(Math.random() * PLASTIC_COLORS.length)];
-    // Pink plastic also gets a hefty emissive so it glows in the fog even
-    // without the hologram — makes it readable from far away.
-    const emissive = g.isHeal ? new THREE.Color(0xff4488) : new THREE.Color(0x000000);
-    mesh.material = new THREE.MeshStandardMaterial({
-      color: rc, roughness: 0.4, metalness: 0.05, side: THREE.DoubleSide,
-      emissive, emissiveIntensity: g.isHeal ? 0.45 : 0,
-    });
+    // Pick a shared palette material instead of allocating one — keeps the
+    // shader program cache from churning on every garbage spawn.
+    mesh.material = g.isHeal
+      ? HEAL_GARBAGE_MAT
+      : PLASTIC_MATS[Math.floor(Math.random() * PLASTIC_MATS.length)];
   } else {
     mesh = createProceduralGarbage(g.type);
   }
@@ -10247,6 +10264,12 @@ function triggerHydroWarning() {
 }
 
 // -- Heal effect (pink glow + 3D particles) --
+// Heal sparkle particle pool — fixed sphere geom, per-particle size handled
+// by mesh.scale so we don't allocate a fresh geometry/material per spawn.
+const _healSparkleGeo = new THREE.SphereGeometry(0.25, 6, 6);
+const _healSparkles = [];
+let _healSparklePool = null;
+
 function triggerHealEffect(x, z) {
   // Screen vignette
   const v = document.getElementById('heal-vignette');
@@ -10256,35 +10279,54 @@ function triggerHealEffect(x, z) {
   setTimeout(() => v.classList.remove('active'), 1000);
 
   // 3D sparkle particles — big burst rising from pickup
+  if (!_healSparklePool) _healSparklePool = makeParticlePool(_healSparkleGeo, 60);
   const wy = getWaveHeight(x, z, gameTime);
   for (let i = 0; i < 18; i++) {
-    const size = 0.15 + Math.random() * 0.2;
-    const pGeom = new THREE.SphereGeometry(size, 6, 6);
+    const m = _healSparklePool.acquire();
+    if (!m) break;
     const hueShift = Math.random() > 0.5 ? 0xff66aa : 0xff99cc;
-    const pMat = new THREE.MeshBasicMaterial({ color: hueShift, transparent: true, opacity: 1 });
-    const p = new THREE.Mesh(pGeom, pMat);
-    p.position.set(
+    m.material.color.setHex(hueShift);
+    m.material.opacity = 1;
+    // Each sparkle was previously sized by allocating SphereGeometry(0.15..0.35);
+    // now we replicate the same visual via base scale on a 0.25-radius sphere.
+    const baseScale = (0.15 + Math.random() * 0.2) / 0.25;
+    m.scale.setScalar(baseScale);
+    m.position.set(
       x + (Math.random() - 0.5) * 2.5,
       wy + 0.5,
       z + (Math.random() - 0.5) * 2.5
     );
-    scene.add(p);
-    const pvx = (Math.random() - 0.5) * 4;
-    const pvy = 3 + Math.random() * 5;
-    const pvz = (Math.random() - 0.5) * 4;
-    const start = performance.now();
-    const dur = 0.8 + Math.random() * 0.4;
-    (function animHeal() {
-      const elapsed = (performance.now() - start) / 1000;
-      if (elapsed > dur) { scene.remove(p); return; }
-      const t = elapsed / dur;
-      p.position.x += pvx * 0.016;
-      p.position.y += pvy * 0.016;
-      p.position.z += pvz * 0.016;
-      p.material.opacity = 1 - t;
-      p.scale.setScalar(1 + t * 0.3);
-      requestAnimationFrame(animHeal);
-    })();
+    m.visible = true;
+    const life = 0.8 + Math.random() * 0.4;
+    _healSparkles.push({
+      mesh: m,
+      vx: (Math.random() - 0.5) * 4,
+      vy: 3 + Math.random() * 5,
+      vz: (Math.random() - 0.5) * 4,
+      life,
+      maxLife: life,
+      baseScale,
+    });
+  }
+}
+
+function updateHealSparkles(dt) {
+  for (let i = _healSparkles.length - 1; i >= 0; i--) {
+    const p = _healSparkles[i];
+    p.life -= dt;
+    if (p.life <= 0) {
+      if (_healSparklePool) _healSparklePool.release(p.mesh);
+      const last = _healSparkles.length - 1;
+      if (i !== last) _healSparkles[i] = _healSparkles[last];
+      _healSparkles.pop();
+      continue;
+    }
+    p.mesh.position.x += p.vx * dt;
+    p.mesh.position.y += p.vy * dt;
+    p.mesh.position.z += p.vz * dt;
+    const t = 1 - p.life / p.maxLife;
+    p.mesh.material.opacity = 1 - t;
+    p.mesh.scale.setScalar(p.baseScale * (1 + t * 0.3));
   }
 }
 
@@ -11601,6 +11643,21 @@ function getPoleTopWorldPos(id) {
 const cargoMap = new Map(); // id -> [mesh, mesh, ...]
 const MAX_CARGO_VISUAL = 35;
 const CARGO_COLORS = [0x44aaff, 0xff4444, 0xffdd00, 0x00cc66, 0xff66aa, 0xffffff, 0xff8800, 0x9944ff];
+// Shared cargo materials — one per palette color, plus a memoized map for
+// any off-palette color sourced from a garbage piece's mesh color so we
+// dedupe across the entire game session.
+const CARGO_MATS = CARGO_COLORS.map(c => new THREE.MeshStandardMaterial({
+  color: c, roughness: 0.5, metalness: 0.05,
+}));
+const _cargoMatByColor = new Map(CARGO_COLORS.map((c, i) => [c, CARGO_MATS[i]]));
+function getCargoMat(colorHex) {
+  let m = _cargoMatByColor.get(colorHex);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.05 });
+    _cargoMatByColor.set(colorHex, m);
+  }
+  return m;
+}
 
 function getGarbageMeshColor(garbageId) {
   const m = garbageMeshes.get(garbageId);
@@ -11620,8 +11677,9 @@ function addCargoVisual(boatMesh, boatId, cargoColor) {
 
   const isWhaleId = bots.some(b => b.isWhale && b.id === boatId);
   const isFisher = !isWhaleId && !!fisherBoatTemplate;
-  const color = cargoColor || CARGO_COLORS[Math.floor(Math.random() * CARGO_COLORS.length)];
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.05 });
+  const mat = cargoColor != null
+    ? getCargoMat(cargoColor)
+    : CARGO_MATS[Math.floor(Math.random() * CARGO_MATS.length)];
 
   const r = Math.random();
   let geo;
@@ -11787,6 +11845,10 @@ function pickCrabJumpClip(clips) {
   return nonDance || clips[0];
 }
 
+// Shared crab-jet particle geometry — one buffer reused across the whole pool.
+const _crabJetParticleGeo = new THREE.SphereGeometry(0.14, 6, 5);
+const _CRAB_JET_POOL_SIZE = 80; // ~60 active at peak intensity (~110/s × 0.55s) + headroom
+
 function createCrabJet() {
   const g = new THREE.Group();
   // Central bright core so there's always something visible even between particles
@@ -11798,22 +11860,40 @@ function createCrabJet() {
   core.scale.set(1.1, 0.6, 1.1);
   g.add(core);
   g.userData.core = core;
+
+  // Pre-allocated particle pool, parented to the jet group so particles
+  // inherit the crab's belly transform without per-frame world math.
+  // Each slot owns its own material instance, so per-particle opacity
+  // mutation doesn't clobber siblings.
+  const free = [];
+  for (let i = 0; i < _CRAB_JET_POOL_SIZE; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xff6622, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const m = new THREE.Mesh(_crabJetParticleGeo, mat);
+    m.visible = false;
+    m.frustumCulled = false;
+    g.add(m);
+    free.push(m);
+  }
+  g.userData.particleFree = free;
+
   // Jet is part of the crab "HUD layer"
   g.traverse(o => o.layers.set(CRAB_LAYER));
   return g;
 }
 
 function spawnCrabJetParticle() {
-  const mat = new THREE.MeshBasicMaterial({
-    color: Math.random() < 0.4 ? 0xffee66 : 0xff6622,
-    transparent: true, opacity: 0.95,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  });
-  const m = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 5), mat);
+  const free = crabIntroJet && crabIntroJet.userData.particleFree;
+  if (!free || !free.length) return;
+  const m = free.pop();
+  m.material.color.setHex(Math.random() < 0.4 ? 0xffee66 : 0xff6622);
+  m.material.opacity = 0.95;
+  m.scale.setScalar(1);
   // Spawn slightly under the crab's belly in crab-local space (jet group)
   m.position.set((Math.random() - 0.5) * 0.4, -0.3 - Math.random() * 0.2, (Math.random() - 0.5) * 0.4);
-  m.layers.set(CRAB_LAYER);
-  crabIntroJet.add(m);
+  m.visible = true;
   crabJetParticles.push({
     mesh: m,
     vx: (Math.random() - 0.5) * 0.4,
@@ -11831,13 +11911,13 @@ function updateCrabJetParticles(dt, intensity) {
     crabJetSpawnAcc -= 1;
     spawnCrabJetParticle();
   }
+  const free = crabIntroJet && crabIntroJet.userData.particleFree;
   for (let i = crabJetParticles.length - 1; i >= 0; i--) {
     const p = crabJetParticles[i];
     p.life -= dt;
     if (p.life <= 0) {
-      crabIntroJet.remove(p.mesh);
-      p.mesh.geometry.dispose();
-      p.mesh.material.dispose();
+      p.mesh.visible = false;
+      if (free) free.push(p.mesh);
       const last = crabJetParticles.length - 1;
       if (i !== last) crabJetParticles[i] = crabJetParticles[last];
       crabJetParticles.pop();
@@ -14079,6 +14159,7 @@ function gameLoop(timestamp) {
   updateTurboParticles(dt);
   updateSmokeParticles(dt);
   updateSplashParticles(dt);
+  updateHealSparkles(dt);
   updateWhaleSpout(dt);
   updateBoatFlags(gameTime);
 
