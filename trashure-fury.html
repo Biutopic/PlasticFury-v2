@@ -601,9 +601,21 @@
       color: var(--primary); margin-bottom: 12px;
       letter-spacing: 1px;
       text-shadow: 0 0 12px rgba(0,220,200,0.3);
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+      max-width: 100%; overflow: hidden;
     }
-    .hud-name .hud-cap-name { white-space: nowrap; }
+    /* Long captain names (e.g. "Capitaine Rackham Mystérieux") used to
+       run off the panel because of nowrap + no width cap. Clamp to the
+       panel and ellipsize; shrink the font a touch so most names still
+       fit in full. */
+    .hud-name .hud-cap-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      font-size: 0.8rem;
+      letter-spacing: 0.5px;
+    }
     .hud-name .hud-mod-icons {
       display: inline-flex; align-items: center; gap: 5px;
       opacity: 0.85;
