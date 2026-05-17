@@ -32,9 +32,11 @@
       display: block;
       width: 100%; height: 100%;
       position: absolute; top: 0; left: 0;
-      /* Subtle color grade: slight contrast boost + tiny desaturation pushes
-         the scene from "vanilla Three.js" toward a moody cinematic look. */
-      filter: contrast(1.08) saturate(0.95) brightness(0.98);
+      /* Subtle color grade: tiny desaturation pushes the scene from
+         "vanilla Three.js" toward a moody cinematic look. Contrast
+         dialed down (was 1.08) so it doesn't crush blacks / blow
+         highlights on high-contrast TV panels. */
+      filter: contrast(0.98) saturate(0.95) brightness(0.98);
     }
     /* Vignette + chromatic edge haze overlay — sits on top of the canvas,
        below the HUD. Darkens corners and adds a subtle blue rim, selling
