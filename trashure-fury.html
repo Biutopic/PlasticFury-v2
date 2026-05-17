@@ -1963,7 +1963,7 @@
     <div class="start-divider"></div>
 
     <div class="start-label" data-i18n="name_label">Nom du Capitaine</div>
-    <input type="text" id="name-input" placeholder="Entre ton nom..." maxlength="16" value="Capitaine" data-i18n-placeholder="name_placeholder">
+    <input type="text" id="name-input" placeholder="Entre ton nom..." maxlength="32" data-i18n-placeholder="name_placeholder">
 
     <div class="start-label" data-i18n="email_label">Email</div>
     <input type="email" id="email-input" placeholder="vous@exemple.com" maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" required>
@@ -2432,7 +2432,7 @@ for (let i = 0; i < 5; i++) {
 
 const localPlayer = {
   id: 'local',
-  name: 'Capitaine',
+  name: '',
   x: SPAWN_CORNERS[0].x, z: SPAWN_CORNERS[0].z,
   rotation: Math.atan2(-SPAWN_CORNERS[0].x, -SPAWN_CORNERS[0].z), // face center
   health: MAX_HEALTH,
@@ -14318,6 +14318,24 @@ function gameLoop(timestamp) {
 // ============================================================
 const startBtn  = document.getElementById('start-btn');
 const nameInput = document.getElementById('name-input');
+
+function _generateCaptainName() {
+  const prefixes = ['Capitaine'];
+  const adjectives = [
+    'Brave', 'Fier', 'Rusé', 'Audacieux', 'Téméraire', 'Sauvage',
+    'Redoutable', 'Célèbre', 'Vaillant', 'Fougueux', 'Impétueux',
+    'Légendaire', 'Mystérieux', 'Intrépide', 'Flamboyant', 'Farouche',
+  ];
+  const names = [
+    'Baleine', 'Calamar', 'Requin', 'Oursin', 'Pieuvre', 'Narval',
+    'Albatros', 'Barracuda', 'Homard', 'Morse', 'Dugong', 'Dauphin',
+    'Barbe', 'Crochet', 'Flint', 'Morgan', 'Bonney', 'Rackham',
+    'Kidd', 'Lafitte', 'Blackwood', 'Tempête', 'Naufrage', 'Brume',
+  ];
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  return `${pick(prefixes)} ${pick(adjectives)} ${pick(names)}`.slice(0, 32);
+}
+nameInput.value = _generateCaptainName();
 
 // ============================================================
 // MULTIPLAYER: PartyKit client + waiting-room orchestration
