@@ -14333,7 +14333,7 @@ function _generateCaptainName() {
     'Kidd', 'Lafitte', 'Blackwood', 'Tempête', 'Naufrage', 'Brume',
   ];
   const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-  return `${pick(prefixes)} ${pick(adjectives)} ${pick(names)}`.slice(0, 32);
+  return `${pick(prefixes)} ${pick(names)} ${pick(adjectives)}`.slice(0, 32);
 }
 nameInput.value = _generateCaptainName();
 
