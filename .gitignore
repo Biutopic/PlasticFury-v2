@@ -28,3 +28,8 @@ dist-ssr
 
 # Local secrets
 .env
+
+# Player PII dumps — pulled from the admin endpoint, never commit
+_emails_dump.json
+_emails*.json
+_emails*.csv

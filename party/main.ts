@@ -181,6 +181,40 @@ const GARBAGE_SPAWN_MS     = 700;  // ~1.4 Hz — faster restock
 const PINK_CHANCE          = 0.10; // fraction of spawns that heal
 const MAX_DEATH_DROP       = 6;    // cap per-sink drop so a chain of deaths doesn't flood
 
+// --- Public-leaderboard spam filter ---
+// Test / dev / junk submissions captured during development. These are
+// hidden from the PUBLIC top-N (action=top) but still kept in storage
+// and still returned by the admin dump — we only suppress them from
+// the player-facing leaderboard, never delete the underlying data.
+const SPAM_EMAILS = new Set<string>([
+  "hydronaute-test@mailforspam.com",
+  "test@mailforspam.com",
+  "test@crabby.fr",
+  "sdf@gmail.com",
+  "teste@stes.tg",
+  "fhg@gfh.com",
+  "mr@trash.com",
+  "trashy@hotmail.fr",
+  "elven.v@hotmail.fr",
+]);
+// Domain / substring patterns that are always test traffic regardless
+// of the local part. Keeps new throwaway addresses from leaking in.
+const SPAM_PATTERNS = [
+  "mailforspam.com",
+  "@gfh.com",
+  "@stes.tg",
+  "@trash.com",
+];
+function isSpamEntry(email: unknown, name: unknown): boolean {
+  const e = String(email || "").trim().toLowerCase();
+  const n = String(name || "").trim().toLowerCase();
+  if (!e) return true; // no email == not a real consented player
+  if (SPAM_EMAILS.has(e)) return true;
+  for (const p of SPAM_PATTERNS) if (e.includes(p)) return true;
+  if (n === "mr trashy") return true;
+  return false;
+}
+
 // World entities
 // Always-on world: one pirate ship is always present. After a sink,
 // a new one respawns after PIRATE_RESPAWN_MS — the threat never goes
@@ -783,6 +817,7 @@ export default class TrashureRoom implements Party.Server {
           const rows: Array<{ name: string; score: number; at: number }> = [];
           for (const v of (all as Map<string, any>).values()) {
             if (v && typeof v.score === "number" && typeof v.name === "string") {
+              if (isSpamEntry(v.email, v.name)) continue; // hide test/dev/spam
               rows.push({ name: v.name, score: v.score, at: v.at || 0 });
             }
           }
