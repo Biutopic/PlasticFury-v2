@@ -5943,8 +5943,14 @@ const mineSpikeDirs = [
 ];
 const MAX_SEA_MINES = 6;
 
+// Warning light is emissive-only — MeshBasicMaterial avoids a full PBR shader
+// compile. Shared across all mines; during triggered flash we set .color each
+// frame so any simultaneous triggered mines are visually fine (same flash color).
+const _mineLightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+
 function createMineMesh() {
   const group = new THREE.Group();
+  // body and spike mats are per-mine so triggered flash can be independent
   const bodyMat = new THREE.MeshStandardMaterial({
     color: 0x1a1a1a, metalness: 0.95, roughness: 0.25,
     emissive: 0x220000, emissiveIntensity: 0.3,
@@ -5959,19 +5965,25 @@ function createMineMesh() {
     group.add(spike);
   }
 
-  // Red warning light on top (no PointLight — emissive only for perf)
-  const lightMat = new THREE.MeshStandardMaterial({
-    color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 2.0,
-  });
-  const light = new THREE.Mesh(mineLightGeo, lightMat);
+  // Red warning light on top (no PointLight — colour-only for perf)
+  const light = new THREE.Mesh(mineLightGeo, _mineLightMat);
   light.position.set(0, 2.3, 0);
   group.add(light);
 
   // Cache refs for per-frame updates (avoids traverse)
   group.userData.bodyMat = bodyMat;
-  group.userData.lightMat = lightMat;
+  group.userData.lightMat = _mineLightMat;
   group.userData.spikeMat = spikeMat;
   return group;
+}
+
+function removeMineFromScene(mesh) {
+  if (!mesh) return;
+  scene.remove(mesh);
+  const ud = mesh.userData;
+  // Dispose per-mine materials (body + spike). lightMat is a shared singleton.
+  if (ud.bodyMat) { ud.bodyMat.dispose(); }
+  if (ud.spikeMat) { ud.spikeMat.dispose(); }
 }
 
 function spawnSeaMine(x, z, pirateId) {
@@ -5979,7 +5991,7 @@ function spawnSeaMine(x, z, pirateId) {
   if (seaMines.length >= MAX_SEA_MINES) {
     const old = seaMines.shift();
     const om = seaMineMeshes.get(old.id);
-    if (om) scene.remove(om);
+    removeMineFromScene(om);
     seaMineMeshes.delete(old.id);
   }
   const id = 'mine_' + (seaMineIdCounter++);
@@ -6009,7 +6021,7 @@ function updateSeaMines(dt) {
         const ud = mesh.userData;
         if (ud.bodyMat) ud.bodyMat.emissive.setHex(flash);
         if (ud.spikeMat) ud.spikeMat.emissive.setHex(flash);
-        if (ud.lightMat) ud.lightMat.emissiveIntensity = 3.0;
+        if (ud.lightMat) ud.lightMat.color.setHex(flash);
         const shake = 0.15;
         const wy = getWaveHeight(m.x, m.z, gameTime);
         mesh.position.set(
@@ -6040,7 +6052,7 @@ function updateSeaMines(dt) {
         addBombRipple(m.x, m.z);
         const dSfx = (m.x - localPlayer.x) ** 2 + (m.z - localPlayer.z) ** 2;
         if (dSfx < 60 * 60) sfx.bomb(m.x, m.z);
-        if (mesh) scene.remove(mesh);
+        removeMineFromScene(mesh);
         seaMineMeshes.delete(m.id);
         seaMines.splice(i, 1);
       }
@@ -6837,36 +6849,53 @@ _texLoader.load('./public/assets/solar-panel/textures/Mat_Color.jpg', (tex) => {
     });
 });
 
+// -- Procedural fallback shared materials (singletons) --
+// These are only used when GLB/FBX assets fail to load, but still worth
+// sharing so repeated spawns don't compile duplicate shader variants.
+const _pfCabinMat    = new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.5 });
+const _pfMastMat     = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+const _pfSailMat     = new THREE.MeshStandardMaterial({ color: 0xeeeeee, side: THREE.DoubleSide, roughness: 0.8 });
+const _pfPirHullMat  = new THREE.MeshStandardMaterial({ color: 0x4a2810, roughness: 0.7 });
+const _pfPirSternMat = new THREE.MeshStandardMaterial({ color: 0x3a1e08 });
+const _pfPirMastMat  = new THREE.MeshStandardMaterial({ color: 0x5c3a1e });
+const _pfPirSailMat  = new THREE.MeshStandardMaterial({ color: 0x111111, side: THREE.DoubleSide, roughness: 0.8 });
+const _pfPirFlagMat  = new THREE.MeshStandardMaterial({ color: 0x000000, side: THREE.DoubleSide });
+const _pfBombBodyMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3, metalness: 0.7 });
+const _pfBombFuseMat = new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff3300, emissiveIntensity: 0.5 });
+const _pfBottleMat   = new THREE.MeshStandardMaterial({ color: 0x44aaff, transparent: true, opacity: 0.7, roughness: 0.2 });
+const _pfWhiteMat    = new THREE.MeshStandardMaterial({ color: 0xffffff });
+const _pfCanisterMat = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.5 });
+const _pfBucketMat   = new THREE.MeshStandardMaterial({ color: 0xffaa00, side: THREE.DoubleSide, roughness: 0.6 });
+const _pfBucketBtmMat= new THREE.MeshStandardMaterial({ color: 0xffaa00 });
+const _pfConeMat     = new THREE.MeshStandardMaterial({ color: 0xff6600, roughness: 0.5 });
+const _pfDefaultMat  = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+// Hull color varies per boat so this one is memoized by color value.
+const _pfBoatHullMats = new Map();
+function _getBoatHullMat(c) {
+  if (!_pfBoatHullMats.has(c)) {
+    _pfBoatHullMats.set(c, new THREE.MeshStandardMaterial({ color: c, roughness: 0.4, metalness: 0.3 }));
+  }
+  return _pfBoatHullMats.get(c);
+}
+
 // -- Procedural fallback: boat --
 function createProceduralBoat(color) {
   const c = typeof color === 'number' ? color : 0x06d6a0;
   const g = new THREE.Group();
   // Hull
-  const hull = new THREE.Mesh(
-    new THREE.BoxGeometry(1.2, 0.5, 3),
-    new THREE.MeshStandardMaterial({ color: c, roughness: 0.4, metalness: 0.3 })
-  );
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.5, 3), _getBoatHullMat(c));
   hull.position.y = 0.25; hull.castShadow = true;
   g.add(hull);
   // Cabin
-  const cabin = new THREE.Mesh(
-    new THREE.BoxGeometry(0.7, 0.5, 1),
-    new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.5 })
-  );
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 1), _pfCabinMat);
   cabin.position.set(0, 0.65, -0.3); cabin.castShadow = true;
   g.add(cabin);
   // Mast
-  const mast = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 1.5, 8),
-    new THREE.MeshStandardMaterial({ color: 0x8B4513 })
-  );
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.5, 8), _pfMastMat);
   mast.position.set(0, 1.3, 0.3);
   g.add(mast);
   // Sail
-  const sail = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.8, 1.0),
-    new THREE.MeshStandardMaterial({ color: 0xeeeeee, side: THREE.DoubleSide, roughness: 0.8 })
-  );
+  const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 1.0), _pfSailMat);
   sail.position.set(0.05, 1.5, 0.3);
   g.add(sail);
   return g;
@@ -6875,38 +6904,24 @@ function createProceduralBoat(color) {
 // -- Procedural fallback: pirate ship --
 function createProceduralPirate() {
   const g = new THREE.Group();
-  const hull = new THREE.Mesh(
-    new THREE.BoxGeometry(2.5, 1.2, 6),
-    new THREE.MeshStandardMaterial({ color: 0x4a2810, roughness: 0.7 })
-  );
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.2, 6), _pfPirHullMat);
   hull.position.y = 0.6; hull.castShadow = true;
   g.add(hull);
   // Stern/bow ramps
-  const sternGeom = new THREE.BoxGeometry(2.4, 0.8, 1);
-  const sternMat  = new THREE.MeshStandardMaterial({ color: 0x3a1e08 });
-  const stern     = new THREE.Mesh(sternGeom, sternMat);
+  const stern = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.8, 1), _pfPirSternMat);
   stern.position.set(0, 1.1, -3); stern.castShadow = true;
   g.add(stern);
   // Masts with sails
   for (let m = -1; m <= 1; m++) {
-    const mast = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.06, 0.06, 3.5, 8),
-      new THREE.MeshStandardMaterial({ color: 0x5c3a1e })
-    );
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.5, 8), _pfPirMastMat);
     mast.position.set(0, 2.8, m * 1.8);
     g.add(mast);
-    const sail = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.8, 1.5),
-      new THREE.MeshStandardMaterial({ color: 0x111111, side: THREE.DoubleSide, roughness: 0.8 })
-    );
+    const sail = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.5), _pfPirSailMat);
     sail.position.set(0, 3.0, m * 1.8);
     g.add(sail);
   }
   // Crossbones flag
-  const flag = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.7, 0.5),
-    new THREE.MeshStandardMaterial({ color: 0x000000, side: THREE.DoubleSide })
-  );
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.5), _pfPirFlagMat);
   flag.position.set(0, 4.5, 0);
   g.add(flag);
   return g;
@@ -6915,15 +6930,9 @@ function createProceduralPirate() {
 // -- Procedural fallback: bomb --
 function createProceduralBomb() {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(0.3, 12, 12),
-    new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3, metalness: 0.7 })
-  );
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 12), _pfBombBodyMat);
   g.add(body);
-  const fuse = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.03, 0.03, 0.25, 6),
-    new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff3300, emissiveIntensity: 0.5 })
-  );
+  const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.25, 6), _pfBombFuseMat);
   fuse.position.y = 0.35;
   g.add(fuse);
   return g;
@@ -6935,56 +6944,31 @@ function createProceduralGarbage(type) {
   let mesh;
   switch (type) {
     case 'water_bottle': {
-      mesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.12, 0.5, 8),
-        new THREE.MeshStandardMaterial({ color: 0x44aaff, transparent: true, opacity: 0.7, roughness: 0.2 })
-      );
-      const cap = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.08, 0.08, 0.08, 8),
-        new THREE.MeshStandardMaterial({ color: 0xffffff })
-      );
+      mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.5, 8), _pfBottleMat);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.08, 8), _pfWhiteMat);
       cap.position.y = 0.29; g.add(cap);
       break;
     }
     case 'canister': {
-      mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(0.35, 0.4, 0.2),
-        new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.5 })
-      );
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.4, 0.2), _pfCanisterMat);
       break;
     }
     case 'plastic_bucket': {
-      mesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.2, 0.15, 0.35, 8, 1, true),
-        new THREE.MeshStandardMaterial({ color: 0xffaa00, side: THREE.DoubleSide, roughness: 0.6 })
-      );
-      // Bottom disc
-      const btm = new THREE.Mesh(
-        new THREE.CircleGeometry(0.15, 8),
-        new THREE.MeshStandardMaterial({ color: 0xffaa00 })
-      );
+      mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.15, 0.35, 8, 1, true), _pfBucketMat);
+      const btm = new THREE.Mesh(new THREE.CircleGeometry(0.15, 8), _pfBucketBtmMat);
       btm.rotation.x = -Math.PI / 2;
       btm.position.y = -0.175;
       g.add(btm);
       break;
     }
     case 'traffic_cone': {
-      mesh = new THREE.Mesh(
-        new THREE.ConeGeometry(0.18, 0.5, 8),
-        new THREE.MeshStandardMaterial({ color: 0xff6600, roughness: 0.5 })
-      );
-      const stripe = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.14, 0.155, 0.06, 8),
-        new THREE.MeshStandardMaterial({ color: 0xffffff })
-      );
+      mesh = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.5, 8), _pfConeMat);
+      const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.155, 0.06, 8), _pfWhiteMat);
       stripe.position.y = 0.05; g.add(stripe);
       break;
     }
     default: {
-      mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.2, 8, 8),
-        new THREE.MeshStandardMaterial({ color: 0xffff00 })
-      );
+      mesh = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), _pfDefaultMat);
     }
   }
   if (mesh) { mesh.castShadow = true; g.add(mesh); }
@@ -11006,25 +10990,23 @@ function getUpgradeVisuals(id) {
   return upgradeVisualsMap.get(id);
 }
 
+const _tinySolarMat = new THREE.MeshStandardMaterial({ color: 0x223388, metalness: 0.8, roughness: 0.2 });
+const _tinyMotorMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.6 });
+const _tinyPumpMat  = new THREE.MeshStandardMaterial({ color: 0x0088dd });
+const _tinySolarGeo = new THREE.BoxGeometry(0.3, 0.02, 0.2);
+const _tinyMotorGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.15, 6);
+const _tinyPumpGeo  = new THREE.CylinderGeometry(0.05, 0.05, 0.12, 6);
+
 function createTinySolar() {
-  return new THREE.Mesh(
-    new THREE.BoxGeometry(0.3, 0.02, 0.2),
-    new THREE.MeshStandardMaterial({ color: 0x223388, metalness: 0.8, roughness: 0.2 })
-  );
+  return new THREE.Mesh(_tinySolarGeo, _tinySolarMat);
 }
 function createTinyMotor() {
-  const m = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.08, 0.15, 6),
-    new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.6 })
-  );
+  const m = new THREE.Mesh(_tinyMotorGeo, _tinyMotorMat);
   m.rotation.x = Math.PI / 2;
   return m;
 }
 function createTinyPump() {
-  return new THREE.Mesh(
-    new THREE.CylinderGeometry(0.05, 0.05, 0.12, 6),
-    new THREE.MeshStandardMaterial({ color: 0x0088dd })
-  );
+  return new THREE.Mesh(_tinyPumpGeo, _tinyPumpMat);
 }
 
 // ============================================================
@@ -11532,6 +11514,10 @@ const POLE_H_LOCAL = 120;
 const POLE_R_LOCAL = 20;
 const POLE_BASE_X = -55, POLE_BASE_Y = 90, POLE_BASE_Z = 45;
 const _flagTopVec = new THREE.Vector3();
+// Shared chimney pole/cap materials — same color used in createBoatFlag and
+// the start-screen showcase boats (_populateShowcase).
+const _chimPoleMat = new THREE.MeshStandardMaterial({ color: 0x202020, metalness: 0.55, roughness: 0.55 });
+const _chimCapMat  = new THREE.MeshStandardMaterial({ color: 0x151515, metalness: 0.45, roughness: 0.65 });
 
 function createBoatFlag(colorHex, id, boatMesh) {
   // Pole/chimney stack: thick, dark, with a seamless flared cap on top
@@ -11539,7 +11525,7 @@ function createBoatFlag(colorHex, id, boatMesh) {
   // of the pole (not the boat), so when other code re-parents the pole
   // to the pitch-wrapper (see initGame), all three pieces travel
   // together and the cap can never detach and float above the boat.
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0x202020, metalness: 0.55, roughness: 0.55 });
+  const poleMat = _chimPoleMat;
   const _poleH = POLE_H_LOCAL + 10;
   const poleGeo = new THREE.CylinderGeometry(POLE_R_LOCAL, POLE_R_LOCAL, _poleH, 14);
   const pole = new THREE.Mesh(poleGeo, poleMat);
@@ -11549,8 +11535,7 @@ function createBoatFlag(colorHex, id, boatMesh) {
   // Pole centre Y = 0 in its own frame; pole top = +_poleH/2 = 65.
   const capH = 14;
   const capGeo = new THREE.CylinderGeometry(POLE_R_LOCAL * 1.45, POLE_R_LOCAL * 1.05, capH, 14);
-  const capMat = new THREE.MeshStandardMaterial({ color: 0x151515, metalness: 0.45, roughness: 0.65 });
-  const cap = new THREE.Mesh(capGeo, capMat);
+  const cap = new THREE.Mesh(capGeo, _chimCapMat);
   cap.position.set(0, _poleH / 2 + capH / 2 - 6, 0);
   pole.add(cap);
   // Base flange: child of pole too.
@@ -12667,6 +12652,13 @@ gltfLoader.load(
   (err) => { console.warn('Crown GLB failed to load — using procedural crown', err); }
 );
 
+const _crownGoldMat  = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 });
+const _crownGemRedMat = new THREE.MeshStandardMaterial({ color: 0xff2244, metalness: 0.5, roughness: 0.3 });
+const _crownGemBluMat = new THREE.MeshStandardMaterial({ color: 0x2244ff, metalness: 0.5, roughness: 0.3 });
+const _crownBaseGeo  = new THREE.TorusGeometry(0.7, 0.12, 8, 16);
+const _crownSpikeGeo = new THREE.ConeGeometry(0.15, 0.6, 4);
+const _crownGemGeo   = new THREE.SphereGeometry(0.08, 6, 6);
+
 function createCrownMesh() {
   // Prefer the GLB template once it's loaded.
   if (_crownGltfTemplate) {
@@ -12674,24 +12666,15 @@ function createCrownMesh() {
   }
   // Procedural fallback (pre-GLB or if the load fails).
   const g = new THREE.Group();
-  const base = new THREE.Mesh(
-    new THREE.TorusGeometry(0.7, 0.12, 8, 16),
-    new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 })
-  );
+  const base = new THREE.Mesh(_crownBaseGeo, _crownGoldMat);
   base.rotation.x = Math.PI / 2;
   g.add(base);
   for (let i = 0; i < 5; i++) {
     const angle = (i / 5) * Math.PI * 2;
-    const spike = new THREE.Mesh(
-      new THREE.ConeGeometry(0.15, 0.6, 4),
-      new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 })
-    );
+    const spike = new THREE.Mesh(_crownSpikeGeo, _crownGoldMat);
     spike.position.set(Math.cos(angle) * 0.7, 0.3, Math.sin(angle) * 0.7);
     g.add(spike);
-    const gem = new THREE.Mesh(
-      new THREE.SphereGeometry(0.08, 6, 6),
-      new THREE.MeshStandardMaterial({ color: i % 2 === 0 ? 0xff2244 : 0x2244ff, metalness: 0.5, roughness: 0.3 })
-    );
+    const gem = new THREE.Mesh(_crownGemGeo, i % 2 === 0 ? _crownGemRedMat : _crownGemBluMat);
     gem.position.set(Math.cos(angle) * 0.7, 0.6, Math.sin(angle) * 0.7);
     g.add(gem);
   }
@@ -16283,18 +16266,16 @@ function _populateShowcase(entry) {
   const _poleBot = 0.3;
   const _poleH   = _poleTop - _poleBot;
   const _poleR   = 0.52;   // 2× previous diameter (stack is a solid pipe)
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0x202020, metalness: 0.55, roughness: 0.55 });
   const pole = new THREE.Mesh(
     new THREE.CylinderGeometry(_poleR, _poleR, _poleH, 10),
-    poleMat
+    _chimPoleMat
   );
   pole.position.set(-1.43, _poleBot + _poleH / 2, 1.17);
   entry.boatGroup.add(pole);
   // Flared cap at the tip where smoke exits
-  const capMat = new THREE.MeshStandardMaterial({ color: 0x151515, metalness: 0.45, roughness: 0.65 });
   const cap = new THREE.Mesh(
     new THREE.CylinderGeometry(_poleR * 1.4, _poleR, 0.28, 10),
-    capMat
+    _chimCapMat
   );
   cap.position.set(-1.43, _poleTop + 0.14, 1.17);
   entry.boatGroup.add(cap);
@@ -16382,10 +16363,7 @@ function _renderStartBoatScenes(tSec) {
       if (entry.smokeSpawnAcc > 0.10) {
         entry.smokeSpawnAcc = 0;
         const color = SMOKE_PALETTE[Math.floor(Math.random() * SMOKE_PALETTE.length)];
-        const mat = new THREE.MeshStandardMaterial({
-          color, transparent: true, opacity: 0.85, roughness: 0.95,
-          emissive: color, emissiveIntensity: 0.15,  // orange puffs glow faintly
-        });
+        const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
         const m = new THREE.Mesh(entry.smokeGeom, mat);
         m.position.set(
           chimX + (Math.random() - 0.5) * 0.18,
