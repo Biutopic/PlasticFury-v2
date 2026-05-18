@@ -1500,14 +1500,16 @@
       to   { opacity: 1; transform: translate(0, -50%); }
     }
     .upgrade-title {
-      font-family: var(--font-heading); font-size: 0.95rem; font-weight: 900;
+      font-family: var(--font-heading); font-size: 0.9rem; font-weight: 900;
       background: linear-gradient(135deg, var(--primary), var(--accent));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       background-clip: text;
       margin-bottom: 0;
+      max-width: 210px; text-align: right; line-height: 1.2;
     }
     .upgrade-subtitle {
       font-size: 0.62rem; color: var(--muted-fg); margin-bottom: 8px;
+      max-width: 210px; text-align: right;
     }
     .upgrade-cards {
       display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;
@@ -1517,9 +1519,9 @@
       width: 210px; min-height: 64px; padding: 12px 14px;
       display: flex; align-items: center; gap: 14px; text-align: left;
       cursor: pointer;
-      border: 1px solid rgba(255,255,255,0.18); border-radius: 12px;
-      background: rgba(8,20,32,0.40);
-      backdrop-filter: blur(2px);
+      border: 1px solid rgba(255,255,255,0.22); border-radius: 12px;
+      background: rgba(8,20,32,0.88);
+      backdrop-filter: blur(4px);
       transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s, background 0.15s;
     }
     .upgrade-card:hover, .upgrade-card.selected {
@@ -16540,7 +16542,7 @@ const I18N_STRINGS = {
     exo_arrow_text: '\u2699 R\u00C9CUP\u00C8RE TES MODULES PERDUS',
     hydro_warn: '\u26A0 L\u2019HYDRONAUTE EST PROT\u00C9G\u00C9E !<br><span>Ne l\u2019attaquez pas \u2014 vous subissez les d\u00E9g\u00E2ts</span>',
     // Upgrade overlay
-    upg_title: 'EXO DISPO',
+    upg_title: 'NOUVELLE UPGRADE DISPONIBLE',
     upg_subtitle: 'Clique pour am\u00E9liorer (optionnel)',
     upg_solar_name: 'Panneau Solaire',
     upg_solar_desc: 'Le turbo dure plus longtemps',
@@ -16678,7 +16680,7 @@ const I18N_STRINGS = {
     exo_arrow_text: '\u2699 RECOVER YOUR LOST MODULES',
     hydro_warn: '\u26A0 THE HYDRONAUTE IS PROTECTED !<br><span>Do not attack her \u2014 you take the damage</span>',
     // Upgrade overlay
-    upg_title: 'EXO READY',
+    upg_title: 'NEW UPGRADE AVAILABLE',
     upg_subtitle: 'Click to upgrade (optional)',
     upg_solar_name: 'Solar Panel',
     upg_solar_desc: 'Turbo lasts longer',
