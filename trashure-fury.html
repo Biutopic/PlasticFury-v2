@@ -1486,17 +1486,17 @@
        X/Y/B on the pad). No dark backdrop, no forced countdown. */
     #upgrade-overlay {
       position: fixed !important;
-      left: 16px !important; right: auto !important;
+      right: 16px !important; left: auto !important;
       top: 50%; transform: translateY(-50%);
       z-index: 50;
-      display: flex; flex-direction: column; align-items: flex-start;
+      display: flex; flex-direction: column; align-items: flex-end;
       gap: 8px;
       background: none;
       pointer-events: none;
       animation: upg-slide-in 0.35s cubic-bezier(.2,.9,.3,1.1);
     }
     @keyframes upg-slide-in {
-      from { opacity: 0; transform: translate(-24px, -50%); }
+      from { opacity: 0; transform: translate(24px, -50%); }
       to   { opacity: 1; transform: translate(0, -50%); }
     }
     .upgrade-title {
@@ -1524,7 +1524,7 @@
     }
     .upgrade-card:hover, .upgrade-card.selected {
       border-color: var(--primary);
-      transform: translateX(4px);
+      transform: translateX(-4px);
       box-shadow: 0 4px 16px rgba(0,200,200,0.25);
     }
     .upgrade-card.selected { background: rgba(0,200,200,0.10); border-color: var(--primary); }
