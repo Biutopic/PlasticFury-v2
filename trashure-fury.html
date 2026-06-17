@@ -2465,15 +2465,15 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 const THREE = window.LQ_MODE
   ? new Proxy(_THREE_REAL, {
       get(target, key) {
-        // Go all the way down to MeshBasicMaterial (not Lambert) in
-        // LQ_MODE. Basic has NO lighting calculation in its shader —
-        // smaller compiled program, no light-uniform buffers, no
-        // shadow uniforms. Saves real GPU memory on the Xbox sandbox,
-        // which is the actual cause of "renders 10s then GPU context
-        // is lost". Scene looks flat (no shading) but actually keeps
-        // rendering instead of crashing.
-        if (key === 'MeshStandardMaterial' || key === 'MeshPhysicalMaterial' || key === 'MeshLambertMaterial') {
-          return target.MeshBasicMaterial;
+        // PBR (Standard/Physical) → Lambert. Going further to Basic
+        // breaks three.js's per-frame refreshUniformsCommon because it
+        // assumes lit materials have .emissive / etc; Basic doesn't,
+        // and the renderer throws "Cannot read properties of undefined
+        // (reading 'value')" every render call. Lambert keeps the
+        // emissive-shaped uniforms so the internal sync stays happy
+        // AND has a small enough shader to compile on Xbox WebGL1.
+        if (key === 'MeshStandardMaterial' || key === 'MeshPhysicalMaterial') {
+          return target.MeshLambertMaterial;
         }
         return target[key];
       },
