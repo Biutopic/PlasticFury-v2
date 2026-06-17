@@ -2314,16 +2314,39 @@
 <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" crossorigin="anonymous"></script>
 
 <!-- Low-quality mode flag, read BEFORE any module script runs so the
-     Three.js setup can branch on it without a one-frame flash. -->
+     Three.js setup can branch on it without a one-frame flash.
+     ALSO auto-enables LQ_MODE when WebGL2 isn't available on the
+     device — Xbox Series Edge supports only WebGL1, which means the
+     default WebGLRenderer in three.js r163+ throws on context creation
+     ("Error creating WebGL context"). LQ_MODE swaps to WebGL1Renderer. -->
 <script>
   window.LQ_MODE = false;
   try { window.LQ_MODE = localStorage.getItem('ti_low_quality') === '1'; } catch (e) {}
+  // Probe WebGL2 once. If unavailable (Xbox Edge, older smart-TV
+  // browsers) we MUST run in LQ_MODE — otherwise WebGLRenderer throws.
+  try {
+    var _probe = document.createElement('canvas').getContext('webgl2');
+    if (!_probe) {
+      window.LQ_MODE = true;
+      window._FORCED_LQ_BY_NO_WEBGL2 = true;
+    }
+  } catch (e) {
+    window.LQ_MODE = true;
+    window._FORCED_LQ_BY_NO_WEBGL2 = true;
+  }
   // Hook the start-screen checkbox: persist + reload on change so the
   // renderer / water material is rebuilt from scratch.
   document.addEventListener('DOMContentLoaded', function () {
     var cb = document.getElementById('lq-input');
     if (!cb) return;
     cb.checked = !!window.LQ_MODE;
+    // When LQ was force-enabled because WebGL2 is missing, lock the
+    // checkbox: unticking it would just crash the page again.
+    if (window._FORCED_LQ_BY_NO_WEBGL2) {
+      cb.disabled = true;
+      var row = document.getElementById('lq-row');
+      if (row) row.title = 'WebGL2 indisponible sur cet appareil — mode TV forcé.';
+    }
     cb.addEventListener('change', function () {
       try { localStorage.setItem('ti_low_quality', cb.checked ? '1' : '0'); } catch (e) {}
       location.reload();
@@ -2331,11 +2354,17 @@
   });
 </script>
 
+<!-- Three.js pinned to r158 (last version that still exposes
+     WebGL1Renderer). r163+ requires WebGL2, which Xbox Series Edge
+     does NOT support. r158 keeps a single codebase that runs on both
+     desktop (WebGL2 / WebGLRenderer) and Xbox / smart-TVs (WebGL1Renderer
+     via LQ_MODE). All addons we use (Water, Sky, GLTFLoader) are
+     stable from r158 → r170. -->
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
   }
 }
 </script>
@@ -6215,7 +6244,14 @@ function updateSeaMines(dt) {
 // 7. THREE.JS SETUP — renderer, scene, camera, water, sky, lights, fog
 // ============================================================
 const canvas   = document.getElementById('game-canvas');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false });
+// LQ_MODE: use WebGL1Renderer (r158 only). Xbox Edge / older smart-TV
+// browsers don't expose a WebGL2 context, so the default WebGLRenderer
+// throws "Error creating WebGL context" at construction. WebGL1Renderer
+// uses the legacy 'webgl' context which IS available there.
+const _RendererCtor = window.LQ_MODE && THREE.WebGL1Renderer
+  ? THREE.WebGL1Renderer
+  : THREE.WebGLRenderer;
+const renderer = new _RendererCtor({ canvas, antialias: false, alpha: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 // NOTE: We DON'T call renderer.setClearColor here — that would be a raw GL
