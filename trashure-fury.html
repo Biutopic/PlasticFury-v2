@@ -2027,6 +2027,17 @@
     </div>
     <div id="start-coming-soon" data-i18n="start_coming_soon">Multijoueur (en ligne et &eacute;cran partag&eacute;) : bient&ocirc;t disponible</div>
 
+    <!-- Low-quality fallback for Xbox Edge / older smart-TV browsers.
+         When the 3D scene renders all-white on a TV it's almost
+         always because the Water shader and/or the tone-mapping path
+         is failing on a constrained GPU driver. Ticking this swaps
+         in a simpler scene that works on those devices. Reloads on
+         change so the renderer is rebuilt from scratch. -->
+    <label id="lq-row" style="display:flex;align-items:center;gap:8px;font-size:0.75rem;color:rgba(255,255,255,0.78);margin-top:10px;cursor:pointer;user-select:none;">
+      <input type="checkbox" id="lq-input" style="width:14px;height:14px;cursor:pointer;">
+      <span data-i18n="lq_label">Mode TV / Xbox (qualit&eacute; r&eacute;duite, plus stable)</span>
+    </label>
+
     <!-- Global leaderboard. Populated on menu open from the PartyKit
          server. Top 10 best plastic counts of all time. -->
     <div id="global-lb-panel">
@@ -2301,6 +2312,24 @@
      the `three` / `three/addons/` specifiers below. Loaded synchronously
      so it's ready before the import map below is parsed. -->
 <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" crossorigin="anonymous"></script>
+
+<!-- Low-quality mode flag, read BEFORE any module script runs so the
+     Three.js setup can branch on it without a one-frame flash. -->
+<script>
+  window.LQ_MODE = false;
+  try { window.LQ_MODE = localStorage.getItem('ti_low_quality') === '1'; } catch (e) {}
+  // Hook the start-screen checkbox: persist + reload on change so the
+  // renderer / water material is rebuilt from scratch.
+  document.addEventListener('DOMContentLoaded', function () {
+    var cb = document.getElementById('lq-input');
+    if (!cb) return;
+    cb.checked = !!window.LQ_MODE;
+    cb.addEventListener('change', function () {
+      try { localStorage.setItem('ti_low_quality', cb.checked ? '1' : '0'); } catch (e) {}
+      location.reload();
+    });
+  });
+</script>
 
 <script type="importmap">
 {
@@ -6194,9 +6223,13 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 // any uncovered pixel goes through the same tone-mapping pipeline as the
 // sky dome and comes out identical. Critical for eliminating the "lighter
 // band at top of screen" artifact.
-renderer.shadowMap.enabled = true;
+// Xbox / smart-TV low-quality mode: drop tone mapping + shadows +
+// fancy water. These are the three things most likely to fail on a
+// constrained Chromium/GPU pair and turn the scene white. Disabled
+// they cost performance/look but give a guaranteed-rendering scene.
+renderer.shadowMap.enabled = !window.LQ_MODE;
 renderer.shadowMap.type    = THREE.PCFShadowMap;
-renderer.toneMapping       = THREE.ACESFilmicToneMapping;
+renderer.toneMapping       = window.LQ_MODE ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.55;  // bright punchy highlights
 // Bright playful sea-haze: pale atmospheric blue-white, so the deep cartoon-
 // blue water reads as *water* against a *sky* instead of the whole frame
@@ -6276,7 +6309,19 @@ scene.add(hemiLight2);
 const waterGeometry = new THREE.PlaneGeometry(10000, 10000);
 const texLoader = new THREE.TextureLoader();
 
-const water = new Water(waterGeometry, {
+let water;
+if (window.LQ_MODE) {
+  // Xbox / TV fallback: skip the Water shader entirely (its custom
+  // reflection + normal-map shader is the most common cause of
+  // "everything is white" on constrained Chromium GPUs). A flat
+  // tinted plane with stock fog reads as "the ocean" well enough.
+  // We stub a `uniforms` object so the runtime water.material.uniforms
+  // ['time'].value = ... calls elsewhere remain safe.
+  const _lqMat = new THREE.MeshBasicMaterial({ color: 0x1a4d6e, fog: true });
+  water = new THREE.Mesh(waterGeometry, _lqMat);
+  water.material.uniforms = { time: { value: 0 }, normalSampler: { value: null } };
+} else {
+  water = new Water(waterGeometry, {
   // Reflection target — was 512x512 which costs a full second-scene
   // render every frame at that resolution (~40% of GPU per frame).
   // The wave normal-map distortion smears the reflection so heavily
@@ -6308,27 +6353,28 @@ const water = new Water(waterGeometry, {
   fog: true,
   alpha: 1.0,
   size: 3.0,
-});
+  });
+  // Water shader fog clamp — at high fog factor (>70%) the output snaps to
+  // exact FOG_COLOR. Makes distant water pixel-identical to the sky dome
+  // at the horizon, eliminating the color-mismatch line WITHOUT needing
+  // scene.background (which masked the countdown view).
+  water.material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <fog_fragment>',
+      `#ifdef USE_FOG
+        #ifdef FOG_EXP2
+          float _clampFogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+        #else
+          float _clampFogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+        #endif
+        _clampFogFactor = smoothstep(0.0, 0.7, _clampFogFactor);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, _clampFogFactor);
+      #endif`
+    );
+  };
+}
 water.rotation.x = -Math.PI / 2;
 water.position.y = 0;
-// Water shader fog clamp — at high fog factor (>70%) the output snaps to
-// exact FOG_COLOR. Makes distant water pixel-identical to the sky dome
-// at the horizon, eliminating the color-mismatch line WITHOUT needing
-// scene.background (which masked the countdown view).
-water.material.onBeforeCompile = (shader) => {
-  shader.fragmentShader = shader.fragmentShader.replace(
-    '#include <fog_fragment>',
-    `#ifdef USE_FOG
-      #ifdef FOG_EXP2
-        float _clampFogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
-      #else
-        float _clampFogFactor = smoothstep(fogNear, fogFar, vFogDepth);
-      #endif
-      _clampFogFactor = smoothstep(0.0, 0.7, _clampFogFactor);
-      gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, _clampFogFactor);
-    #endif`
-  );
-};
 scene.add(water);
 
 // ---- 3D WAVE RINGS — torus wake rings behind boats ----
@@ -16676,6 +16722,7 @@ const I18N_STRINGS = {
     wr_hint_recap: 'R\u00E9cap de la manche en cours. Prochaine manche dans un instant.',
     start_solo_link: 'Jouer hors ligne (solo)',
     start_coming_soon: 'Multijoueur (en ligne et &eacute;cran partag&eacute;) : bient\u00F4t disponible',
+    lq_label: 'Mode TV / Xbox (qualit\u00E9 r\u00E9duite, plus stable)',
     wr_seat_human: 'Humain',
     wr_seat_bot: 'Bot',
     wr_seat_open: 'Si\u00E8ge libre',
@@ -16812,6 +16859,7 @@ const I18N_STRINGS = {
     wr_hint_recap: 'Round recap in progress. Next round starts shortly.',
     start_solo_link: 'Play offline (solo)',
     start_coming_soon: 'Multiplayer (online and split-screen): coming soon',
+    lq_label: 'TV / Xbox mode (lower quality, more compatible)',
     wr_seat_human: 'Human',
     wr_seat_bot: 'Bot',
     wr_seat_open: 'Seat open',
