@@ -2295,6 +2295,13 @@
   <button class="gameover-btn" id="gameover-btn" data-i18n="go_replay" onclick="window._rejoinSession && window._rejoinSession()">REJOUER</button>
 </div>
 
+<!-- Import-map polyfill for older Chromium-based browsers (Xbox Edge,
+     some older smart-TV browsers, older Edge). Native browsers ignore
+     the shim once they detect support; older ones use it to resolve
+     the `three` / `three/addons/` specifiers below. Loaded synchronously
+     so it's ready before the import map below is parsed. -->
+<script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" crossorigin="anonymous"></script>
+
 <script type="importmap">
 {
   "imports": {
@@ -2302,6 +2309,54 @@
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
   }
 }
+</script>
+
+<!-- Visible-on-screen runtime error overlay. Without dev tools (Xbox,
+     smart TV, kiosk) failures look like "nothing happens" — this
+     surfaces the actual error text so a non-load can be diagnosed at
+     a glance. Auto-hides once the game canvas starts producing frames. -->
+<script>
+(function setupBootDiagnostics() {
+  var msgs = [];
+  function paint() {
+    var el = document.getElementById('_boot_diag');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = '_boot_diag';
+      el.style.cssText = [
+        'position:fixed','left:50%','top:50%','transform:translate(-50%,-50%)',
+        'z-index:99999','max-width:80vw','max-height:70vh','overflow:auto',
+        'background:rgba(20,8,8,0.92)','color:#ffd8d8','border:2px solid #ff5566',
+        'border-radius:10px','padding:18px 22px','font-family:monospace',
+        'font-size:13px','line-height:1.5','white-space:pre-wrap',
+        'box-shadow:0 8px 30px rgba(0,0,0,0.55)'
+      ].join(';') + ';';
+      document.body && document.body.appendChild(el);
+    }
+    el.textContent = 'Boot error\n' + msgs.join('\n');
+  }
+  window.addEventListener('error', function (e) {
+    var src = e.filename ? (' @ ' + e.filename.split('/').pop() + ':' + e.lineno) : '';
+    msgs.push('· ' + (e.message || 'error') + src);
+    paint();
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    msgs.push('· promise: ' + (e.reason && e.reason.message || e.reason || 'rejected'));
+    paint();
+  });
+  // Auto-hide once the renderer is producing frames (game booted OK).
+  var startedAt = Date.now();
+  var checker = setInterval(function () {
+    var c = document.getElementById('game-canvas');
+    var ok = c && c.width > 0 && c.getContext && !!c.getContext('webgl2');
+    if (ok && msgs.length === 0) {
+      var el = document.getElementById('_boot_diag');
+      if (el) el.remove();
+      clearInterval(checker);
+    }
+    if (Date.now() - startedAt > 30000) clearInterval(checker);
+  }, 1000);
+})();
 </script>
 
 <script type="module">
