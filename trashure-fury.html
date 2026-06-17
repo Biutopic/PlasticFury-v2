@@ -2465,8 +2465,15 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 const THREE = window.LQ_MODE
   ? new Proxy(_THREE_REAL, {
       get(target, key) {
-        if (key === 'MeshStandardMaterial' || key === 'MeshPhysicalMaterial') {
-          return target.MeshLambertMaterial;
+        // Go all the way down to MeshBasicMaterial (not Lambert) in
+        // LQ_MODE. Basic has NO lighting calculation in its shader —
+        // smaller compiled program, no light-uniform buffers, no
+        // shadow uniforms. Saves real GPU memory on the Xbox sandbox,
+        // which is the actual cause of "renders 10s then GPU context
+        // is lost". Scene looks flat (no shading) but actually keeps
+        // rendering instead of crashing.
+        if (key === 'MeshStandardMaterial' || key === 'MeshPhysicalMaterial' || key === 'MeshLambertMaterial') {
+          return target.MeshBasicMaterial;
         }
         return target[key];
       },
@@ -6308,14 +6315,19 @@ try {
   window._FORCED_LQ_BY_NO_WEBGL2 = true;
   renderer = _makeRenderer(true);
 }
-renderer.setSize(window.innerWidth, window.innerHeight);
-// LQ_MODE drops the pixel ratio hard. Xbox at 4K TV reports a DPR of
-// up to 2.0 — that's the actual cause of "plays 10s then crashes to
-// black": the WebGL framebuffer + depth + render targets exceed the
-// sandboxed GPU memory budget and the browser kills the context.
-// 0.75 quarters the pixel count vs 1.5 — clearly noticeable upscale
-// but stays inside the budget. Desktop unchanged.
-renderer.setPixelRatio(window.LQ_MODE ? 0.75 : Math.min(window.devicePixelRatio, 1.5));
+if (window.LQ_MODE) {
+  // Fixed 1280×720 internal framebuffer regardless of TV resolution.
+  // updateStyle=false keeps the canvas CSS at full window size so
+  // the browser GPU-upscales — no per-pixel cost beyond the 720p
+  // buffer. Combined with pixelRatio=1.0 this caps total framebuffer
+  // memory at ~3.5 MB (rgba+depth) which sits inside the Xbox WebGL
+  // sandbox even after other allocations.
+  renderer.setSize(1280, 720, false);
+  renderer.setPixelRatio(1);
+} else {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+}
 
 // Context-loss handler. On Xbox a memory blowup terminates the WebGL
 // context — without this the screen just goes black and the player has
@@ -17054,7 +17066,13 @@ applyI18n(_currentLang);
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  // LQ_MODE keeps the fixed 720p internal buffer regardless of window
+  // size — the canvas CSS still fills the screen, browser upscales.
+  if (window.LQ_MODE) {
+    renderer.setSize(1280, 720, false);
+  } else {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
 });
 
 
