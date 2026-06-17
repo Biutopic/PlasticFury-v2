@@ -2375,7 +2375,27 @@
      a glance. Auto-hides once the game canvas starts producing frames. -->
 <script>
 (function setupBootDiagnostics() {
+  // Pre-collect environment info so a single screenshot tells the
+  // whole story even before the renderer is touched. Each line is
+  // tagged so we can find them quickly in a photo of the TV.
   var msgs = [];
+  try {
+    var c1 = document.createElement('canvas');
+    var c2 = document.createElement('canvas');
+    var gl1 = c1.getContext('webgl') || c1.getContext('experimental-webgl');
+    var gl2 = c2.getContext('webgl2');
+    msgs.push('[env] LQ_MODE=' + !!window.LQ_MODE +
+              ' webgl1=' + !!gl1 + ' webgl2=' + !!gl2);
+    if (gl2 && typeof gl2.createVertexArray !== 'function') {
+      msgs.push('[env] WARN: webgl2 ctx returned but missing createVertexArray (broken)');
+    }
+    if (gl1) {
+      msgs.push('[env] GL_VERSION=' + (gl1.getParameter(gl1.VERSION) || '?'));
+      msgs.push('[env] GL_RENDERER=' + (gl1.getParameter(gl1.RENDERER) || '?').toString().slice(0, 60));
+    }
+  } catch (envErr) {
+    msgs.push('[env] probe-failed: ' + (envErr.message || envErr));
+  }
   function paint() {
     var el = document.getElementById('_boot_diag');
     if (!el) {
