@@ -13135,7 +13135,7 @@ function gameLoop(timestamp) {
     // (dance ends at cdTimer = -0.5, fly-out is 0.7s → ends at -1.2).
     if (countdownTimer <= -1.2) {
       countdownActive = false;
-      cdOverlay.classList.add('hidden');
+      if (_cdOverlayEl) _cdOverlayEl.classList.add('hidden');
       hideCountdownText();
       // Make sure the crab is gone before gameplay starts
       if (crabIntroGroup) removeCrabIntro();
