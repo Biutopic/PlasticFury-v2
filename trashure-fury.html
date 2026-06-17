@@ -6309,7 +6309,33 @@ try {
   renderer = _makeRenderer(true);
 }
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+// LQ_MODE drops the pixel ratio hard. Xbox at 4K TV reports a DPR of
+// up to 2.0 — that's the actual cause of "plays 10s then crashes to
+// black": the WebGL framebuffer + depth + render targets exceed the
+// sandboxed GPU memory budget and the browser kills the context.
+// 0.75 quarters the pixel count vs 1.5 — clearly noticeable upscale
+// but stays inside the budget. Desktop unchanged.
+renderer.setPixelRatio(window.LQ_MODE ? 0.75 : Math.min(window.devicePixelRatio, 1.5));
+
+// Context-loss handler. On Xbox a memory blowup terminates the WebGL
+// context — without this the screen just goes black and the player has
+// no idea what's wrong. Show a friendly overlay asking for a reload,
+// and prevent the default so the browser doesn't shrug silently.
+canvas.addEventListener('webglcontextlost', function (ev) {
+  ev.preventDefault();
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;inset:0;z-index:99998;display:flex;' +
+    'align-items:center;justify-content:center;flex-direction:column;' +
+    'background:rgba(5,10,20,0.92);color:#ffe;font-family:monospace;' +
+    'font-size:18px;padding:24px;text-align:center;line-height:1.5;';
+  el.innerHTML = '<div style="font-size:28px;color:#ff8855;margin-bottom:18px;">' +
+    'Connexion GPU perdue</div>' +
+    '<div style="max-width:600px;">L\'Xbox a fermé le rendu 3D.<br>' +
+    'Recharge la page pour rejouer.<br><br>' +
+    '<span style="color:#88aacc;font-size:14px;">' +
+    '(Lié au budget mémoire WebGL du navigateur Xbox)</span></div>';
+  document.body.appendChild(el);
+}, false);
 // NOTE: We DON'T call renderer.setClearColor here — that would be a raw GL
 // clear bypassing tone mapping. We set scene.background below instead, so
 // any uncovered pixel goes through the same tone-mapping pipeline as the
