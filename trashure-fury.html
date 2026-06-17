@@ -2423,7 +2423,7 @@
 // Single-file vanilla JS + Three.js r170 via import maps
 // ================================================================
 
-import * as THREE from 'three';
+import * as _THREE_REAL from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -2431,21 +2431,27 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
-// LQ_MODE: alias every PBR material to MeshLambertMaterial so all the
-// existing `new THREE.MeshStandardMaterial(...)` / Physical calls
-// elsewhere in this file automatically construct WebGL1-safe materials
-// instead. PBR materials are the canonical "renders white on WebGL1"
-// failure — their shader uses precision that Xbox Edge's GL driver
-// can't compile correctly, so the fragment falls back to fragColor=1.
-// Lambert is the oldest, simplest lit material in three.js — works
-// on every WebGL1 implementation we've ever seen. Roughness/metalness
-// passed to the constructor are silently ignored (extra properties),
-// no errors. Visual loses the metallic look but the geometry actually
-// renders, which is the whole point.
-if (window.LQ_MODE) {
-  THREE.MeshStandardMaterial = THREE.MeshLambertMaterial;
-  THREE.MeshPhysicalMaterial = THREE.MeshLambertMaterial;
-}
+// LQ_MODE: wrap the THREE namespace in a Proxy that swaps every
+// `THREE.MeshStandardMaterial` / `MeshPhysicalMaterial` lookup for
+// `MeshLambertMaterial`. ES module namespaces are frozen so we can't
+// reassign properties directly (that throws "Cannot assign to property
+// 'MeshStandardMaterial' of [object Module]"), but a Proxy lets us
+// intercept the lookups transparently. Every existing `new THREE.
+// MeshStandardMaterial(...)` call across this file now constructs a
+// Lambert material instead, without per-site edits. Roughness/metalness
+// passed to the constructor are silently stored as extra properties.
+// PBR is the canonical "renders white on WebGL1" failure (Xbox Edge),
+// so this is the unblocker for the kiosk demo.
+const THREE = window.LQ_MODE
+  ? new Proxy(_THREE_REAL, {
+      get(target, key) {
+        if (key === 'MeshStandardMaterial' || key === 'MeshPhysicalMaterial') {
+          return target.MeshLambertMaterial;
+        }
+        return target[key];
+      },
+    })
+  : _THREE_REAL;
 
 // ============================================================
 // 1. CONSTANTS
