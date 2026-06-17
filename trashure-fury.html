@@ -2431,6 +2431,22 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
+// LQ_MODE: alias every PBR material to MeshLambertMaterial so all the
+// existing `new THREE.MeshStandardMaterial(...)` / Physical calls
+// elsewhere in this file automatically construct WebGL1-safe materials
+// instead. PBR materials are the canonical "renders white on WebGL1"
+// failure — their shader uses precision that Xbox Edge's GL driver
+// can't compile correctly, so the fragment falls back to fragColor=1.
+// Lambert is the oldest, simplest lit material in three.js — works
+// on every WebGL1 implementation we've ever seen. Roughness/metalness
+// passed to the constructor are silently ignored (extra properties),
+// no errors. Visual loses the metallic look but the geometry actually
+// renders, which is the whole point.
+if (window.LQ_MODE) {
+  THREE.MeshStandardMaterial = THREE.MeshLambertMaterial;
+  THREE.MeshPhysicalMaterial = THREE.MeshLambertMaterial;
+}
+
 // ============================================================
 // 1. CONSTANTS
 // ============================================================
