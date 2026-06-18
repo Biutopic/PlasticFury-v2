@@ -2462,16 +2462,16 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 // passed to the constructor are silently stored as extra properties.
 // PBR is the canonical "renders white on WebGL1" failure (Xbox Edge),
 // so this is the unblocker for the kiosk demo.
-const THREE = window.LQ_MODE
+// Only swap PBR materials when we ACTUALLY have no WebGL2 (real Xbox
+// case). The manual LQ_MODE toggle on a desktop with WebGL2 should
+// just disable shadows / water / tone-mapping — materials work fine
+// natively. The Proxy alias broke desktop LQ_MODE with per-frame
+// "uniforms.emissive.value undefined" errors because something in the
+// scene didn't survive the Standard → Lambert swap, and that path is
+// only worth taking when there's no other option.
+const THREE = window._FORCED_LQ_BY_NO_WEBGL2
   ? new Proxy(_THREE_REAL, {
       get(target, key) {
-        // PBR (Standard/Physical) → Lambert. Going further to Basic
-        // breaks three.js's per-frame refreshUniformsCommon because it
-        // assumes lit materials have .emissive / etc; Basic doesn't,
-        // and the renderer throws "Cannot read properties of undefined
-        // (reading 'value')" every render call. Lambert keeps the
-        // emissive-shaped uniforms so the internal sync stays happy
-        // AND has a small enough shader to compile on Xbox WebGL1.
         if (key === 'MeshStandardMaterial' || key === 'MeshPhysicalMaterial') {
           return target.MeshLambertMaterial;
         }
