@@ -33,3 +33,5 @@ dist-ssr
 _emails_dump.json
 _emails*.json
 _emails*.csv
+Trashure_Island_players.xlsx
+_build_xlsx.py
